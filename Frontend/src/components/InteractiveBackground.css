@@ -1,0 +1,187 @@
+.iq-bg {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  background:
+    radial-gradient(120% 90% at 18% 8%, rgba(79, 124, 255, 0.22) 0%, transparent 58%),
+    radial-gradient(100% 80% at 88% 92%, rgba(139, 92, 246, 0.2) 0%, transparent 60%),
+    linear-gradient(168deg, var(--iq-bg-0) 0%, var(--iq-bg-1) 46%, var(--iq-bg-2) 100%);
+}
+
+.iq-bg > * {
+  position: absolute;
+  inset: 0;
+}
+
+/* --- cinematic backdrop with parallax --- */
+
+.iq-bg__image {
+  background-size: cover;
+  background-position: center;
+  opacity: 0.55;
+  filter: blur(1.5px) saturate(1.15) contrast(1.05);
+  transform: translate3d(calc(var(--iq-px) * -14px), calc(var(--iq-py) * -14px), 0) scale(1.08);
+  transition: transform 0.7s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* --- aurora fields --- */
+
+.iq-bg__aurora {
+  mix-blend-mode: screen;
+}
+
+.iq-bg__blob {
+  position: absolute;
+  display: block;
+  border-radius: 50%;
+  filter: blur(90px);
+  will-change: transform;
+}
+
+.iq-bg__blob--1 {
+  top: -14%;
+  left: 6%;
+  width: 52vw;
+  height: 52vw;
+  max-width: 760px;
+  max-height: 760px;
+  background: radial-gradient(circle, rgba(79, 124, 255, 0.5) 0%, transparent 68%);
+  animation: iq-drift-a 26s ease-in-out infinite;
+}
+
+.iq-bg__blob--2 {
+  right: 2%;
+  bottom: -18%;
+  width: 46vw;
+  height: 46vw;
+  max-width: 680px;
+  max-height: 680px;
+  background: radial-gradient(circle, rgba(139, 92, 246, 0.46) 0%, transparent 68%);
+  animation: iq-drift-b 32s ease-in-out infinite;
+}
+
+.iq-bg__blob--3 {
+  top: 26%;
+  left: 42%;
+  width: 34vw;
+  height: 34vw;
+  max-width: 520px;
+  max-height: 520px;
+  background: radial-gradient(circle, rgba(34, 211, 238, 0.36) 0%, transparent 66%);
+  animation: iq-drift-c 38s ease-in-out infinite;
+}
+
+/* --- neural network canvas --- */
+
+.iq-bg__canvas {
+  width: 100%;
+  height: 100%;
+  opacity: 0.8;
+  mix-blend-mode: screen;
+}
+
+/* --- perspective grid --- */
+
+.iq-bg__grid {
+  inset: auto -30% -12% -30%;
+  height: 72%;
+  background-image:
+    linear-gradient(rgba(129, 178, 255, 0.15) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(129, 178, 255, 0.15) 1px, transparent 1px);
+  background-size: 64px 64px;
+  transform-origin: bottom center;
+  transform: perspective(540px) rotateX(64deg)
+    translate3d(calc(var(--iq-px) * 16px), calc(var(--iq-py) * 10px), 0);
+  -webkit-mask-image: radial-gradient(72% 92% at 50% 100%, #000 0%, transparent 74%);
+  mask-image: radial-gradient(72% 92% at 50% 100%, #000 0%, transparent 74%);
+  opacity: 0.55;
+  transition: transform 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* --- cursor spotlight --- */
+
+.iq-bg__spotlight {
+  background: radial-gradient(
+    620px circle at var(--iq-mx) var(--iq-my),
+    rgba(79, 124, 255, 0.17) 0%,
+    rgba(34, 211, 238, 0.08) 32%,
+    transparent 66%
+  );
+  mix-blend-mode: screen;
+}
+
+/* --- bokeh --- */
+
+.iq-bg__bokeh {
+  position: absolute;
+  display: block;
+  border-radius: 50%;
+  filter: blur(2px);
+  background: radial-gradient(circle, rgba(226, 240, 255, 0.5) 0%, rgba(226, 240, 255, 0) 70%);
+}
+
+.iq-bg__bokeh--1 {
+  inset: auto auto 18% 12%;
+  width: 160px;
+  height: 160px;
+  opacity: 0.5;
+  animation: iq-float 13s ease-in-out infinite;
+}
+
+.iq-bg__bokeh--2 {
+  inset: 14% 16% auto auto;
+  width: 96px;
+  height: 96px;
+  opacity: 0.38;
+  animation: iq-float 17s ease-in-out infinite reverse;
+}
+
+.iq-bg__bokeh--3 {
+  inset: auto 6% 32% auto;
+  width: 64px;
+  height: 64px;
+  opacity: 0.3;
+  animation: iq-float 21s ease-in-out infinite;
+}
+
+/* --- grain + vignette --- */
+
+.iq-bg__noise {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)'/%3E%3C/svg%3E");
+  opacity: 0.045;
+  mix-blend-mode: overlay;
+}
+
+.iq-bg__vignette {
+  background: radial-gradient(
+    130% 120% at 50% 44%,
+    rgba(4, 6, 14, 0) 38%,
+    rgba(4, 6, 14, 0.62) 78%,
+    rgba(4, 6, 14, 0.9) 100%
+  );
+}
+
+/* --- mobile: drop the expensive ambient layers --- */
+
+.iq-bg--compact .iq-bg__grid,
+.iq-bg--compact .iq-bg__bokeh--2,
+.iq-bg--compact .iq-bg__bokeh--3 {
+  display: none;
+}
+
+.iq-bg--compact .iq-bg__image {
+  opacity: 0.42;
+  filter: blur(3px) saturate(1.05);
+  transform: scale(1.1);
+}
+
+.iq-bg--compact .iq-bg__blob {
+  filter: blur(60px);
+  animation: none;
+}
+
+.iq-bg--compact .iq-bg__canvas {
+  opacity: 0.55;
+}
