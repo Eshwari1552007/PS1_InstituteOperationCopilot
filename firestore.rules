@@ -385,6 +385,54 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    match /timetableSettings/{settingsId} {
+      allow get, list: if isOwner() || isTrainer();
+      allow create, update: if isOwner() && settingsId == 'main'
+        && request.resource.data.keys().hasOnly(['workingDays', 'openTime', 'closeTime', 'slotIncrement', 'breaks', 'rooms', 'updatedAt'])
+        && request.resource.data.workingDays is list && request.resource.data.workingDays.size() <= 7
+        && request.resource.data.rooms is list && request.resource.data.rooms.size() <= 100
+        && request.resource.data.breaks is list && request.resource.data.breaks.size() <= 30
+        && request.resource.data.slotIncrement in [15, 30, 60]
+        && request.resource.data.openTime is string && request.resource.data.closeTime is string
+        && request.resource.data.updatedAt == request.time;
+      allow delete: if false;
+    }
+
+    match /timetableSessions/{sessionId} {
+      allow get, list: if isOwner() || (isTrainer() && resource.data.teacherId == request.auth.uid)
+        || (isStudent() && exists(/databases/$(database)/documents/enrollments/$(request.auth.uid + '__' + resource.data.batchDocId))
+          && get(/databases/$(database)/documents/enrollments/$(request.auth.uid + '__' + resource.data.batchDocId)).data.status == 'ACTIVE'
+          && resource.data.status == 'PUBLISHED');
+      allow create: if isOwner()
+        && request.resource.data.batchDocId is string
+        && exists(/databases/$(database)/documents/batches/$(request.resource.data.batchDocId))
+        && request.resource.data.teacherId is string
+        && exists(/databases/$(database)/documents/users/$(request.resource.data.teacherId))
+        && get(/databases/$(database)/documents/users/$(request.resource.data.teacherId)).data.role == 'TRAINER'
+        && get(/databases/$(database)/documents/users/$(request.resource.data.teacherId)).data.status == 'APPROVED'
+        && request.resource.data.day in ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+        && request.resource.data.startMinutes is int && request.resource.data.endMinutes is int
+        && request.resource.data.durationMinutes is int
+        && request.resource.data.durationMinutes > 0
+        && request.resource.data.endMinutes - request.resource.data.startMinutes == request.resource.data.durationMinutes
+        && request.resource.data.roomId is string
+        && request.resource.data.source in ['GENERATED', 'MANUAL']
+        && request.resource.data.status in ['DRAFT', 'PUBLISHED']
+        && exists(/databases/$(database)/documents/timetableSettings/main)
+        && request.resource.data.day in get(/databases/$(database)/documents/timetableSettings/main).data.workingDays;
+      allow update: if isOwner()
+        && request.resource.data.batchDocId == resource.data.batchDocId
+        && request.resource.data.durationMinutes == resource.data.durationMinutes
+        && request.resource.data.endMinutes - request.resource.data.startMinutes == request.resource.data.durationMinutes
+        && request.resource.data.teacherId is string
+        && exists(/databases/$(database)/documents/users/$(request.resource.data.teacherId))
+        && get(/databases/$(database)/documents/users/$(request.resource.data.teacherId)).data.role == 'TRAINER'
+        && get(/databases/$(database)/documents/users/$(request.resource.data.teacherId)).data.status == 'APPROVED'
+        && request.resource.data.day in get(/databases/$(database)/documents/timetableSettings/main).data.workingDays
+        && request.resource.data.status in ['DRAFT', 'PUBLISHED'];
+      allow delete: if isOwner() && resource.data.status != 'PUBLISHED';
+    }
+
     // All other collections remain private unless explicitly authorized above.
     match /{document=**} {
       allow read, write: if false;

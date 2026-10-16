@@ -37,6 +37,16 @@ function timeMinutes(value) {
   return match ? Number(match[1]) * 60 + Number(match[2]) : NaN;
 }
 
+export function getBatchDurationHours(batch) {
+  const saved = Number(batch?.durationHours);
+  if (Number.isFinite(saved) && saved > 0) return saved;
+  const start = timeMinutes(batch?.startTime); const end = timeMinutes(batch?.endTime);
+  const legacyMinutes = end - start;
+  return Number.isFinite(start) && Number.isFinite(end) && legacyMinutes >= 15 && legacyMinutes % 15 === 0
+    ? legacyMinutes / 60
+    : null;
+}
+
 function dateKey(date) {
   const current = date ? new Date(date) : new Date();
   const year = current.getFullYear();
@@ -72,12 +82,16 @@ export function validateCourse(input) {
 }
 
 export function validateBatch(input) {
+  const legacyStart = timeMinutes(input.startTime); const legacyEnd = timeMinutes(input.endTime);
+  const legacyDuration = Number.isFinite(legacyStart) && Number.isFinite(legacyEnd) && legacyEnd > legacyStart ? (legacyEnd - legacyStart) / 60 : NaN;
   const value = {
     name: String(input.name || '').trim(), courseDocId: String(input.courseDocId || '').trim(),
     teacherId: String(input.teacherId || '').trim(), roomNumber: String(input.roomNumber || '').trim(),
     startDate: String(input.startDate || '').trim(), endDate: String(input.endDate || '').trim(),
     daysOfWeek: [...new Set(input.daysOfWeek || [])], startTime: String(input.startTime || '').trim(),
     endTime: String(input.endTime || '').trim(), capacity: Number(input.capacity),
+    durationHours: Number(input.durationHours ?? legacyDuration),
+    sessionsPerWeek: Number(input.sessionsPerWeek ?? ((input.daysOfWeek || []).length || 1)),
     price: Number(input.price ?? input.fee ?? 0),
     learningModes: [...new Set(input.learningModes || ['OFFLINE'])],
     onlineClassDetails: String(input.onlineClassDetails || '').trim(),
@@ -87,11 +101,13 @@ export function validateBatch(input) {
   if (value.name.length < 2) errors.name = 'Batch name is required.';
   if (!value.courseDocId) errors.courseDocId = 'Select a course.';
   if (!value.teacherId) errors.teacherId = 'Select an approved Trainer.';
-  if (value.learningModes.includes('OFFLINE') && !value.roomNumber) errors.roomNumber = 'Room number is required for offline classes.';
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value.startDate)) errors.startDate = 'Choose a start date.';
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value.endDate) || value.endDate <= value.startDate) errors.endDate = 'End date must be after the start date.';
   if (!value.daysOfWeek.length || value.daysOfWeek.some((day) => !['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'].includes(day))) errors.daysOfWeek = 'Choose at least one valid class day.';
-  if (!Number.isFinite(timeMinutes(value.startTime)) || !Number.isFinite(timeMinutes(value.endTime)) || timeMinutes(value.endTime) <= timeMinutes(value.startTime)) errors.endTime = 'End time must be after start time.';
+  if (!Number.isFinite(value.durationHours) || value.durationHours < 0.25 || value.durationHours > 12 || Math.round(value.durationHours * 4) !== value.durationHours * 4) errors.durationHours = 'Enter a class duration from 0.25 to 12 hours in 15-minute increments.';
+  if (!Number.isInteger(value.sessionsPerWeek) || value.sessionsPerWeek < 1 || value.sessionsPerWeek > 7) errors.sessionsPerWeek = 'Choose 1 to 7 sessions per week.';
+  const hasLegacyTime = Boolean(value.startTime || value.endTime);
+  if (hasLegacyTime && (!Number.isFinite(timeMinutes(value.startTime)) || !Number.isFinite(timeMinutes(value.endTime)) || timeMinutes(value.endTime) <= timeMinutes(value.startTime))) errors.endTime = 'Existing preferred time must have an end after the start. Clear both legacy times or correct them.';
   if (!Number.isInteger(value.capacity) || value.capacity < 1 || value.capacity > 500) errors.capacity = 'Capacity must be a positive whole number (maximum 500).';
   if (!Number.isFinite(value.price) || value.price < 0) errors.price = 'Enter a non-negative batch price.';
   if (!value.learningModes.length || value.learningModes.some((mode) => !['ONLINE', 'OFFLINE'].includes(mode))) errors.learningModes = 'Select Online, Offline, or both modes.';
@@ -223,6 +239,7 @@ export async function saveCourse(input, actorUid, existingId = '') {
 }
 
 function lockKeys(batch) {
+  if (!Number.isFinite(timeMinutes(batch.startTime)) || !Number.isFinite(timeMinutes(batch.endTime)) || timeMinutes(batch.endTime) <= timeMinutes(batch.startTime)) return [];
   const firstSlot = Math.floor(timeMinutes(batch.startTime) / 15);
   const afterLastSlot = Math.ceil(timeMinutes(batch.endTime) / 15);
   const keys = [];

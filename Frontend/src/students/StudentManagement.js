@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertCircle, ChevronLeft, ChevronRight, Eye, Pencil, Plus, RefreshCw, Search, Trash2, Users, X } from 'lucide-react';
 import { listStudents, removeStudent, saveStudent } from './studentService';
-import { getEnrollmentOptions } from '../batches/academyService';
+import { getBatchDurationHours, getEnrollmentOptions } from '../batches/academyService';
 import './students.css';
 
 const PAGE_SIZE = 10;
@@ -64,7 +64,7 @@ function StudentForm({ initial, mode, busy, error, onClose, onSubmit, options })
           {field('admissionDate', 'Admission date', 'date', true)}
           <label className="sm-field"><span>Account status<b aria-hidden="true"> *</b></span><select value={values.status === 'PENDING' ? 'ACTIVE' : values.status} onChange={update('status')} disabled={mode === 'view'}><option value="ACTIVE">Active</option><option value="INACTIVE">Inactive</option></select>{errors.status && <small role="alert">{errors.status}</small>}</label>
         </div>
-        {selectedBatch && <div className="sm-enrollment-preview"><strong>{selectedBatch.teacherName || 'Trainer not assigned'}</strong><span>{selectedBatch.roomNumber || 'Room not assigned'} · {selectedBatch.daysOfWeek?.join(', ')} · {selectedBatch.startTime}–{selectedBatch.endTime}</span><span>{selectedBatch.startDate} – {selectedBatch.endDate} · {Math.max(0, Number(selectedBatch.capacity || 0) - Number(selectedBatch.enrolledCount || 0))} seats available</span></div>}
+        {selectedBatch && <div className="sm-enrollment-preview"><strong>{selectedBatch.teacherName || 'Trainer not assigned'}</strong><span>{selectedBatch.roomNumber || 'Room assigned by timetable'} · {selectedBatch.daysOfWeek?.join(', ')} · {getBatchDurationHours(selectedBatch) || 'Duration missing'} h/session · clock time assigned in timetable</span><span>{selectedBatch.startDate} – {selectedBatch.endDate} · {Math.max(0, Number(selectedBatch.capacity || 0) - Number(selectedBatch.enrolledCount || 0))} seats available</span></div>}
         {values.enrollmentStatus && <p className="sm-enrollment-status">Current enrollment: {values.enrollmentStatus}</p>}
         <h3>Additional information</h3><div className="sm-form__grid">
           {field('guardianName', 'Parent / guardian name')}{field('guardianPhone', 'Parent / guardian contact', 'tel')}

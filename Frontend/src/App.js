@@ -9,6 +9,7 @@ import BatchesCourses from './batches/BatchesCourses';
 import StudentPortal from './students/StudentPortal';
 import AttendanceWorkspace from './students/AttendanceWorkspace';
 import FeesWorkspace from './students/FeesWorkspace';
+import Timetable from './timetable/Timetable';
 import { PUBLIC_ROLES, completeProfile, logout, observeAuth } from './auth/authService';
 import { db } from './firebase';
 import './App.css';
@@ -125,7 +126,8 @@ export default function App() {
     const permitted = allowed
       || (nextRoute === 'attendance' && ['OWNER', 'COUNSELOR', 'TRAINER'].includes(profile?.role))
       || (nextRoute === 'fees' && ['OWNER', 'COUNSELOR', 'ACCOUNTS'].includes(profile?.role));
-    const safeRoute = permitted ? nextRoute : 'dashboard';
+    const withTimetable = permitted || (nextRoute === 'timetable' && ['OWNER', 'TRAINER'].includes(profile?.role));
+    const safeRoute = withTimetable ? nextRoute : 'dashboard';
     window.location.hash = safeRoute === 'dashboard' ? '' : `/${safeRoute}`;
     setRoute(safeRoute);
   };
@@ -147,12 +149,13 @@ export default function App() {
         ? 'attendance'
       : route === 'fees' && ['OWNER', 'COUNSELOR', 'ACCOUNTS'].includes(profile.role)
         ? 'fees'
+      : route === 'timetable' && ['OWNER', 'TRAINER'].includes(profile.role)
+        ? 'timetable'
       : 'dashboard';
   return <div className="ep-app">
     <RoleSidebar profile={profile} active={authorizedRoute} onNavigate={navigate} onLogout={handleLogout} />
     <main className="ep-main">
-      {authorizedRoute === 'approvals' ? <OwnerApprovals ownerUid={account.uid} /> : authorizedRoute === 'students' ? <StudentManagement profile={profile} /> : authorizedRoute === 'batches' ? <BatchesCourses profile={profile} /> : authorizedRoute === 'attendance' ? <AttendanceWorkspace profile={profile} /> : authorizedRoute === 'fees' ? <FeesWorkspace profile={profile} /> : profile.role === 'STUDENT' ? <StudentPortal profile={profile} /> : <Dashboard profile={profile} />}
+      {authorizedRoute === 'approvals' ? <OwnerApprovals ownerUid={account.uid} /> : authorizedRoute === 'students' ? <StudentManagement profile={profile} /> : authorizedRoute === 'batches' ? <BatchesCourses profile={profile} /> : authorizedRoute === 'attendance' ? <AttendanceWorkspace profile={profile} /> : authorizedRoute === 'fees' ? <FeesWorkspace profile={profile} /> : authorizedRoute === 'timetable' ? <Timetable profile={profile} /> : profile.role === 'STUDENT' ? <StudentPortal profile={profile} /> : <Dashboard profile={profile} />}
     </main>
   </div>;
 }
-

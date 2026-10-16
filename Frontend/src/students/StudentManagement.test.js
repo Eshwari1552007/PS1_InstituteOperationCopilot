@@ -8,7 +8,7 @@ jest.mock('./studentService', () => ({
   removeStudent: jest.fn(),
   saveStudent: jest.fn(),
 }));
-jest.mock('../batches/academyService', () => ({ getEnrollmentOptions: jest.fn() }));
+jest.mock('../batches/academyService', () => ({ getBatchDurationHours: jest.fn((batch) => batch?.durationHours || 1), getEnrollmentOptions: jest.fn() }));
 
 const options = {
   courses: [{ documentId: 'course-doc-1', courseId: 'CRS-2026-0001', name: 'Science', status: 'ACTIVE' }],

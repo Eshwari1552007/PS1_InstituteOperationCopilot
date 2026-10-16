@@ -31,11 +31,11 @@ export default function RoleSidebar({ profile, onLogout, active, onNavigate }) {
         </div>
         <nav aria-label="Main navigation" className="ep-nav">
           {menu.map(([label, Icon, enabled]) => {
-            const target = label === 'Approvals' ? 'approvals' : label === 'Students' ? 'students' : label.includes('Batches') || label === 'My Batches' ? 'batches' : label === 'Attendance' ? 'attendance' : label.includes('Fees') ? 'fees' : 'dashboard';
+            const target = label === 'Approvals' ? 'approvals' : label === 'Students' ? 'students' : label.includes('Batches') || label === 'My Batches' ? 'batches' : label === 'Attendance' ? 'attendance' : label.includes('Fees') ? 'fees' : label === 'Timetable' ? 'timetable' : 'dashboard';
             const canNavigate = Boolean(enabled)
               || (target === 'students' && ['OWNER', 'COUNSELOR'].includes(profile.role))
               || (target === 'batches' && ['OWNER', 'COUNSELOR', 'TRAINER'].includes(profile.role));
-            const finalCanNavigate = canNavigate || (target === 'attendance' && ['OWNER', 'COUNSELOR', 'TRAINER'].includes(profile.role)) || (target === 'fees' && ['OWNER', 'COUNSELOR', 'ACCOUNTS'].includes(profile.role));
+            const finalCanNavigate = canNavigate || (target === 'attendance' && ['OWNER', 'COUNSELOR', 'TRAINER'].includes(profile.role)) || (target === 'fees' && ['OWNER', 'COUNSELOR', 'ACCOUNTS'].includes(profile.role)) || (target === 'timetable' && ['OWNER', 'TRAINER'].includes(profile.role));
             return (
               <button
                 key={label}

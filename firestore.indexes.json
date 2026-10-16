@@ -32,6 +32,30 @@
         { "fieldPath": "sessionId", "order": "ASCENDING" },
         { "fieldPath": "teacherId", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "timetableSessions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "teacherId", "order": "ASCENDING" },
+        { "fieldPath": "day", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "timetableSessions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "batchDocId", "order": "ASCENDING" },
+        { "fieldPath": "teacherId", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "timetableSessions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "batchDocId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []
