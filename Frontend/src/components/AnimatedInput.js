@@ -1,9 +1,8 @@
 import { useId } from 'react';
 
 /**
- * Glass input with a floating label, focus icon animation and a luminous
- * gradient ring on focus. Uses the :placeholder-shown trick so the label
- * position is driven purely by CSS.
+ * Field with a floating label and a focus ring driven purely by CSS
+ * (:focus-within and the :placeholder-shown trick).
  */
 export default function AnimatedInput({
   label,
@@ -17,7 +16,7 @@ export default function AnimatedInput({
   ...rest
 }) {
   const autoId = useId();
-  const inputId = id || `iq-field-${autoId}`;
+  const inputId = id || `ax-field-${autoId}`;
   const errorId = `${inputId}-error`;
   const filled = value !== undefined && value !== null && String(value).length > 0;
 
@@ -25,23 +24,23 @@ export default function AnimatedInput({
     <div className={className}>
       <div
         className={[
-          'iq-field',
-          error ? 'iq-field--error' : '',
-          filled ? 'iq-field--filled' : '',
-          Icon ? '' : 'iq-field--no-icon',
+          'ax-field',
+          error ? 'ax-field--error' : '',
+          filled ? 'ax-field--filled' : '',
+          Icon ? '' : 'ax-field--no-icon',
         ]
           .filter(Boolean)
           .join(' ')}
       >
         {Icon && (
-          <span className="iq-field__icon">
-            <Icon size={17} strokeWidth={1.9} aria-hidden="true" />
+          <span className="ax-field__icon">
+            <Icon size={17} strokeWidth={1.8} aria-hidden="true" />
           </span>
         )}
 
         <input
           id={inputId}
-          className="iq-field__input"
+          className="ax-field__input"
           type={type}
           value={value}
           placeholder=" "
@@ -50,17 +49,15 @@ export default function AnimatedInput({
           {...rest}
         />
 
-        <label className="iq-field__label" htmlFor={inputId}>
+        <label className="ax-field__label" htmlFor={inputId}>
           {label}
         </label>
 
-        <span className="iq-field__ring" aria-hidden="true" />
-
-        {trailing && <span className="iq-field__trailing">{trailing}</span>}
+        {trailing && <span className="ax-field__trailing">{trailing}</span>}
       </div>
 
       {error && (
-        <p className="iq-field__error" id={errorId} role="alert">
+        <p className="ax-field__error" id={errorId} role="alert">
           {error}
         </p>
       )}

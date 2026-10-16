@@ -5,22 +5,36 @@ import {
   AlertTriangle,
   ArrowLeft,
   ArrowRight,
+  Briefcase,
+  Calculator,
   Check,
   CheckCircle2,
+  GraduationCap,
   Loader2,
   Mail,
+  ShieldCheck,
 } from 'lucide-react';
 import AnimatedInput from './AnimatedInput';
-import MagneticButton from './MagneticButton';
+import Button from './Button';
+import Logo from './Logo';
 import PasswordInput from './PasswordInput';
 import { login, requestPasswordReset } from '../auth/authService';
+import SignupForm from './SignupForm';
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+const ROLES = [
+  { id: 'STUDENT', label: 'Student', icon: GraduationCap },
+  { id: 'COUNSELOR', label: 'Counselor', icon: ShieldCheck },
+  { id: 'TRAINER', label: 'Trainer', icon: Briefcase },
+  { id: 'ACCOUNTS', label: 'Accounts', icon: Calculator },
+  { id: 'OWNER', label: 'Owner', icon: ShieldCheck },
+];
+
 const viewVariants = {
-  hidden: { opacity: 0, y: 16 },
-  show: { opacity: 1, y: 0, transition: { duration: 0.42, ease: [0.22, 1, 0.36, 1] } },
-  exit: { opacity: 0, y: -12, transition: { duration: 0.2, ease: 'easeIn' } },
+  hidden: { opacity: 0, y: 14 },
+  show: { opacity: 1, y: 0, transition: { duration: 0.4, ease: [0.22, 1, 0.36, 1] } },
+  exit: { opacity: 0, y: -10, transition: { duration: 0.18, ease: 'easeIn' } },
 };
 
 const ALERT_ICONS = {
@@ -34,15 +48,14 @@ function StatusAlert({ tone, message }) {
 
   return (
     <motion.div
-      className="iq-alert-wrap"
       initial={{ opacity: 0, height: 0, marginTop: 0 }}
       animate={{ opacity: 1, height: 'auto', marginTop: 16 }}
       exit={{ opacity: 0, height: 0, marginTop: 0 }}
-      transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+      transition={{ duration: 0.26, ease: [0.22, 1, 0.36, 1] }}
       style={{ overflow: 'hidden' }}
     >
-      <p className={`iq-alert iq-alert--${tone}`} role="alert">
-        <Icon className="iq-alert__icon" size={15} strokeWidth={2} aria-hidden="true" />
+      <p className={`ax-alert ax-alert--${tone}`} role="alert">
+        <Icon className="ax-alert__icon" size={15} strokeWidth={2} aria-hidden="true" />
         <span>{message}</span>
       </p>
     </motion.div>
@@ -52,16 +65,16 @@ function StatusAlert({ tone, message }) {
 function SuccessPanel() {
   return (
     <motion.div
-      className="iq-success"
+      className="ax-success"
       initial={{ opacity: 0, scale: 0.96 }}
       animate={{ opacity: 1, scale: 1 }}
       transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
     >
-      <svg className="iq-success__check" viewBox="0 0 52 52" role="img" aria-label="Signed in">
+      <svg className="ax-success__check" viewBox="0 0 52 52" role="img" aria-label="Signed in">
         <defs>
-          <linearGradient id="iq-success-gradient" x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0%" stopColor="#22d3ee" />
-            <stop offset="100%" stopColor="#4ade80" />
+          <linearGradient id="ax-success-gradient" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stopColor="#7d5a44" />
+            <stop offset="100%" stopColor="#b2967d" />
           </linearGradient>
         </defs>
         <motion.circle
@@ -69,7 +82,7 @@ function SuccessPanel() {
           cy="26"
           r="23"
           fill="none"
-          stroke="url(#iq-success-gradient)"
+          stroke="url(#ax-success-gradient)"
           strokeWidth="1.6"
           strokeLinecap="round"
           initial={{ pathLength: 0, opacity: 0.4 }}
@@ -79,7 +92,7 @@ function SuccessPanel() {
         <motion.path
           d="M15.5 27.2l7.3 7.3L37 20.6"
           fill="none"
-          stroke="url(#iq-success-gradient)"
+          stroke="url(#ax-success-gradient)"
           strokeWidth="3"
           strokeLinecap="round"
           strokeLinejoin="round"
@@ -89,14 +102,15 @@ function SuccessPanel() {
         />
       </svg>
 
-      <h2 className="iq-success__title">Signed in</h2>
-      <p className="iq-success__text">Preparing your workspace…</p>
+      <h2 className="ax-success__title">Signed in</h2>
+      <p className="ax-success__text">Preparing your workspace…</p>
     </motion.div>
   );
 }
 
 export default function AuthForm({ onAuthenticated }) {
   const [view, setView] = useState('login');
+  const [role, setRole] = useState('STUDENT');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [remember, setRemember] = useState(false);
@@ -123,9 +137,7 @@ export default function AuthForm({ onAuthenticated }) {
   };
 
   const clearFieldError = (field) =>
-    setErrors((previous) =>
-      previous[field] ? { ...previous, [field]: undefined } : previous
-    );
+    setErrors((previous) => (previous[field] ? { ...previous, [field]: undefined } : previous));
 
   const goTo = (nextView) => {
     setView(nextView);
@@ -153,7 +165,7 @@ export default function AuthForm({ onAuthenticated }) {
     setStatus(null);
 
     try {
-      await login({ email: email.trim(), password, remember });
+      await login({ email: email.trim(), password, remember, role });
       setView('success');
       handoffTimer.current = window.setTimeout(() => onAuthenticated?.(), 1300);
     } catch (error) {
@@ -193,27 +205,56 @@ export default function AuthForm({ onAuthenticated }) {
   const busy = submitting;
 
   return (
-    <div className={`iq-form-body${shake ? ' iq-shake' : ''}`}>
-      <div className="iq-brand">
-        <span className="iq-brand__mark" aria-hidden="true">
-          IQ
+    <div className={`ax-form-body${shake ? ' ax-shake' : ''}`}>
+      <div className="ax-card__brand">
+        <Logo size={32} />
+        <span className="ax-brand__name">
+          EDUPILOT
         </span>
-        <span className="iq-brand__name">InstituteIQ</span>
       </div>
 
       <AnimatePresence mode="wait" initial={false}>
         {view === 'success' && <SuccessPanel key="success" />}
 
+        {view === 'signup' && (
+          <motion.div key="signup" variants={viewVariants} initial="hidden" animate="show" exit="exit">
+            <SignupForm onBack={() => goTo('login')} />
+          </motion.div>
+        )}
+
         {view === 'login' && (
           <motion.div key="login" variants={viewVariants} initial="hidden" animate="show" exit="exit">
-            <header className="iq-form__head">
-              <h1 className="iq-form__title">Welcome back.</h1>
-              <p className="iq-form__sub">Your institute. One intelligent workspace.</p>
+            <header className="ax-form__head">
+              <h1 className="ax-form__title">Welcome Back</h1>
+              <p className="ax-form__sub">Sign in to your EDUPILOT account.</p>
             </header>
 
-            <form className="iq-form" onSubmit={handleLogin} noValidate>
+            <form className="ax-form" onSubmit={handleLogin} noValidate>
+              <fieldset className="ax-roles" disabled={busy}>
+                <legend className="ax-roles__legend">Sign in as</legend>
+                <div className="ax-roles__grid">
+                  {ROLES.map(({ id, label, icon: Icon }) => (
+                    <label
+                      key={id}
+                      className={`ax-role${role === id ? ' ax-role--active' : ''}`}
+                    >
+                      <input
+                        className="ax-role__input"
+                        type="radio"
+                        name="role"
+                        value={id}
+                        checked={role === id}
+                        onChange={() => setRole(id)}
+                      />
+                      <Icon size={16} strokeWidth={1.8} aria-hidden="true" />
+                      <span>{label}</span>
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+
               <AnimatedInput
-                label="Email address"
+                label="Email"
                 icon={Mail}
                 type="email"
                 name="email"
@@ -239,21 +280,21 @@ export default function AuthForm({ onAuthenticated }) {
                 error={errors.password}
               />
 
-              <div className="iq-form__row">
-                <label className="iq-check">
+              <div className="ax-form__row">
+                <label className="ax-check">
                   <input
                     type="checkbox"
                     checked={remember}
                     disabled={busy}
                     onChange={(event) => setRemember(event.target.checked)}
                   />
-                  <span className="iq-check__box" aria-hidden="true">
+                  <span className="ax-check__box" aria-hidden="true">
                     <Check size={12} strokeWidth={3.2} />
                   </span>
-                  <span className="iq-check__text">Remember me</span>
+                  <span className="ax-check__text">Remember me</span>
                 </label>
 
-                <button type="button" className="iq-link" onClick={() => goTo('forgot')}>
+                <button type="button" className="ax-link" onClick={() => goTo('forgot')}>
                   Forgot password?
                 </button>
               </div>
@@ -262,10 +303,10 @@ export default function AuthForm({ onAuthenticated }) {
                 {status && <StatusAlert key="login-status" tone={status.tone} message={status.message} />}
               </AnimatePresence>
 
-              <MagneticButton type="submit" disabled={busy} className="iq-form__submit">
+              <Button type="submit" disabled={busy} className="ax-form__submit">
                 {busy ? (
                   <>
-                    <Loader2 className="iq-spin" size={17} strokeWidth={2.2} aria-hidden="true" />
+                    <Loader2 className="ax-spin" size={17} strokeWidth={2.2} aria-hidden="true" />
                     Signing in…
                   </>
                 ) : (
@@ -274,37 +315,28 @@ export default function AuthForm({ onAuthenticated }) {
                     <ArrowRight size={17} strokeWidth={2.2} aria-hidden="true" />
                   </>
                 )}
-              </MagneticButton>
+              </Button>
             </form>
 
-            <p className="iq-form__foot">
-              Accounts are provisioned by your institute administrator. Need access?{' '}
-              <a className="iq-link" href="#support">
-                Contact support
-              </a>
+            <p className="ax-form__foot">
+              Don&apos;t have an account?{' '}
+              <button type="button" className="ax-link" onClick={() => goTo('signup')}>Sign up</button>
             </p>
-
-            {process.env.NODE_ENV !== 'production' && (
-              <p className="iq-note">
-                Auth API not connected yet — this form posts to <code>POST /api/auth/login</code>.
-                Set <code>REACT_APP_API_URL</code> to point at your Express server.
-              </p>
-            )}
           </motion.div>
         )}
 
         {view === 'forgot' && (
           <motion.div key="forgot" variants={viewVariants} initial="hidden" animate="show" exit="exit">
-            <header className="iq-form__head">
-              <h1 className="iq-form__title">Reset your password.</h1>
-              <p className="iq-form__sub">
+            <header className="ax-form__head">
+              <h1 className="ax-form__title">Reset your password</h1>
+              <p className="ax-form__sub">
                 We&apos;ll email a secure reset link if the account exists.
               </p>
             </header>
 
-            <form className="iq-form" onSubmit={handleForgot} noValidate>
+            <form className="ax-form" onSubmit={handleForgot} noValidate>
               <AnimatedInput
-                label="Email address"
+                label="Email"
                 icon={Mail}
                 type="email"
                 name="email"
@@ -322,43 +354,43 @@ export default function AuthForm({ onAuthenticated }) {
                 {status && <StatusAlert key="forgot-status" tone={status.tone} message={status.message} />}
               </AnimatePresence>
 
-              <MagneticButton type="submit" disabled={busy} className="iq-form__submit">
+              <Button type="submit" disabled={busy} className="ax-form__submit">
                 {busy ? (
                   <>
-                    <Loader2 className="iq-spin" size={17} strokeWidth={2.2} aria-hidden="true" />
+                    <Loader2 className="ax-spin" size={17} strokeWidth={2.2} aria-hidden="true" />
                     Sending…
                   </>
                 ) : (
                   'Send reset link'
                 )}
-              </MagneticButton>
+              </Button>
 
-              <MagneticButton
+              <Button
                 variant="ghost"
-                className="iq-form__back"
+                className="ax-form__back"
                 onClick={() => goTo('login')}
                 disabled={busy}
               >
                 <ArrowLeft size={16} strokeWidth={2.2} aria-hidden="true" />
                 Back to sign in
-              </MagneticButton>
+              </Button>
             </form>
           </motion.div>
         )}
 
         {view === 'reset-sent' && (
           <motion.div key="reset-sent" variants={viewVariants} initial="hidden" animate="show" exit="exit">
-            <header className="iq-form__head">
-              <h1 className="iq-form__title">Check your inbox.</h1>
-              <p className="iq-form__sub">
+            <header className="ax-form__head">
+              <h1 className="ax-form__title">Check your inbox</h1>
+              <p className="ax-form__sub">
                 If an account exists for {email.trim()}, a reset link is on its way.
               </p>
             </header>
 
-            <MagneticButton variant="ghost" className="iq-form__back" onClick={() => goTo('login')}>
+            <Button variant="ghost" className="ax-form__back" onClick={() => goTo('login')}>
               <ArrowLeft size={16} strokeWidth={2.2} aria-hidden="true" />
               Back to sign in
-            </MagneticButton>
+            </Button>
           </motion.div>
         )}
       </AnimatePresence>

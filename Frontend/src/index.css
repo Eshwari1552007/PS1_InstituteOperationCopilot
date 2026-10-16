@@ -12,8 +12,8 @@ body,
 
 body {
   margin: 0;
-  background: #04060e;
-  color: #f4f7ff;
+  background: #f5f1ea;
+  color: #4a342a;
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
     'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
   -webkit-font-smoothing: antialiased;

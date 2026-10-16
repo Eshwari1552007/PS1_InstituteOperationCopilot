@@ -1,47 +1,40 @@
 import { motion, useReducedMotion } from 'framer-motion';
 import '../theme/auth.css';
 import './LoginPage.css';
-import InteractiveBackground from './InteractiveBackground';
-import GlassCard from './GlassCard';
+import AuthCard from './AuthCard';
 import AuthForm from './AuthForm';
-import ShowcasePanel from './ShowcasePanel';
-import useMediaQuery from '../hooks/useMediaQuery';
-import usePointer from '../hooks/usePointer';
+import BrandPanel from './BrandPanel';
+import useParallax from '../hooks/useParallax';
 
 export default function LoginPage({ onAuthenticated }) {
   const reducedMotion = Boolean(useReducedMotion());
-  const compact = useMediaQuery('(max-width: 1080px)');
-
-  // Global pointer custom properties power the spotlight, parallax and grid.
-  usePointer(!reducedMotion && !compact);
+  useParallax(!reducedMotion);
 
   return (
-    <div className="iq-shell">
-      <InteractiveBackground reducedMotion={reducedMotion} compact={compact} />
+    <div className="ax-shell">
+      <main className="ax-stage">
+        <BrandPanel />
 
-      <main className="iq-stage">
-        <section className="iq-stage__hero">{!compact && <ShowcasePanel />}</section>
-
-        <section className="iq-stage__auth">
+        <section className="ax-panel" aria-label="Sign in">
           <motion.div
-            className="iq-card-float"
-            initial={{ opacity: 0, y: 28 }}
+            className="ax-panel__inner"
+            initial={reducedMotion ? false : { opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.75, ease: [0.22, 1, 0.36, 1], delay: 0.1 }}
+            transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
           >
-            <GlassCard className="iq-card">
+            <AuthCard>
               <AuthForm onAuthenticated={onAuthenticated} />
-            </GlassCard>
-          </motion.div>
+            </AuthCard>
 
-          <footer className="iq-footer">
-            <span>© {new Date().getFullYear()} InstituteIQ</span>
-            <nav className="iq-footer__links" aria-label="Legal">
-              <a href="#privacy">Privacy</a>
-              <a href="#terms">Terms</a>
-              <a href="#security">Security</a>
-            </nav>
-          </footer>
+            <footer className="ax-foot">
+              <span>© {new Date().getFullYear()} EDUPILOT</span>
+              <nav className="ax-foot__links" aria-label="Legal">
+                <a href="#privacy">Privacy</a>
+                <a href="#terms">Terms</a>
+                <a href="#security">Security</a>
+              </nav>
+            </footer>
+          </motion.div>
         </section>
       </main>
     </div>

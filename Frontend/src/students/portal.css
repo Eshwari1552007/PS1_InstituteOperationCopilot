@@ -1,0 +1,52 @@
+.ep-portal { display: grid; gap: 22px; }
+.ep-portal__head { display:flex; align-items:flex-end; justify-content:space-between; gap:18px; }
+.ep-portal__head h1 { margin:0; color:var(--ax-choco); font: clamp(30px,4vw,44px)/1.1 var(--ax-font-serif); }
+.ep-portal__head p:not(.ep-eyebrow) { color:var(--ax-text-muted); font-size:13px; }
+.ep-portal__head strong { color:var(--ax-brown); }
+.ep-portal__stats { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:14px; }
+.ep-portal__stats article,.ep-portal__section,.ep-portal__card,.ep-fee-list article { background:#fffefc; border:1px solid var(--ax-border); border-radius:15px; box-shadow:var(--ax-shadow-card); }
+.ep-portal__stats article { display:grid; gap:8px; padding:19px; }
+.ep-portal__stats span,.ep-portal__metrics span { color:var(--ax-text-muted); font-size:11px; }
+.ep-portal__stats strong { color:var(--ax-choco); font-size:24px; }
+.ep-portal__section { padding:20px; }
+.ep-portal__section > header { display:flex; align-items:center; justify-content:space-between; gap:14px; margin-bottom:15px; }
+.ep-portal__section h2 { margin:0; color:var(--ax-choco); font:22px var(--ax-font-serif); }
+.ep-portal__section header p { margin:5px 0 0; color:var(--ax-text-muted); font-size:11px; }
+.ep-portal__section header input,.ep-fee-record input,.ep-attendance-controls input,.ep-attendance-controls select,.ep-attendance-list select { min-height:38px; padding:8px 10px; color:var(--ax-text); background:#fff; border:1px solid var(--ax-border); border-radius:8px; font:inherit; font-size:11px; }
+.ep-portal__browse-filters { display:flex; flex-wrap:wrap; gap:8px; margin:-3px 0 14px; }
+.ep-portal__browse-filters select { min-height:36px; padding:7px 9px; color:var(--ax-text); background:#fff; border:1px solid var(--ax-border); border-radius:8px; font:inherit; font-size:10px; }
+.ep-portal__grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:13px; }
+.ep-portal__card { display:flex; flex-direction:column; align-items:flex-start; gap:8px; padding:17px; box-shadow:none; }
+.ep-portal__cardhead { display:flex; align-items:center; justify-content:space-between; width:100%; color:var(--ax-brown); font-size:10px; font-weight:700; }
+.ep-portal__card h3 { margin:4px 0 0; color:var(--ax-choco); font-size:14px; }
+.ep-portal__card p { margin:0; color:var(--ax-text-muted); font-size:10px; line-height:1.55; }
+.ep-portal__price { color:var(--ax-choco); font-size:19px; }
+.ep-portal__mode { display:flex; align-items:center; justify-content:space-between; width:100%; gap:8px; color:var(--ax-text-muted); font-size:10px; }
+.ep-portal__mode select { min-height:34px; padding:6px 9px; color:var(--ax-text); background:#fff; border:1px solid var(--ax-border); border-radius:8px; font:inherit; }
+.ep-portal__metrics { display:grid; width:100%; gap:7px; padding-top:10px; margin-top:auto; border-top:1px solid var(--ax-border); }
+.ep-portal__metrics span { display:flex; justify-content:space-between; }
+.ep-portal__metrics b { color:var(--ax-choco); }
+.ep-portal__empty { padding:22px 10px; color:var(--ax-text-muted); text-align:center; font-size:12px; }
+.ep-portal__success { padding:11px 13px; color:#396842; background:#e9f3e9; border:1px solid #cfe4d1; border-radius:9px; font-size:12px; }
+.ep-attendance-controls { display:flex; flex-wrap:wrap; align-items:flex-end; gap:10px; padding:16px 0; }
+.ep-attendance-controls label,.ep-fee-record label { display:grid; gap:6px; color:var(--ax-text-muted); font-size:10px; }
+.ep-session-list { display:flex; flex-wrap:wrap; gap:7px; }
+.ep-session-list button { padding:9px 11px; color:var(--ax-brown); background:#fff; border:1px solid var(--ax-border); border-radius:8px; cursor:pointer; font:inherit; font-size:10px; }
+.ep-session-list button.is-active { color:#fff; background:var(--ax-brown); }
+.ep-attendance-list,.ep-fee-list { display:grid; gap:10px; }
+.ep-attendance-list article,.ep-fee-list article { padding:14px; }
+.ep-attendance-list article { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.ep-attendance-list article > div,.ep-fee-list article header > div { display:grid; gap:5px; }
+.ep-attendance-list strong,.ep-fee-list strong { color:var(--ax-choco); font-size:12px; }
+.ep-attendance-list span,.ep-fee-list header span { color:var(--ax-text-muted); font-size:10px; }
+.ep-fee-list article header { display:flex; justify-content:space-between; gap:10px; }
+.ep-fee-list article header > b { color:#805d20; font-size:10px; }
+.ep-fee-metrics { display:flex; flex-wrap:wrap; gap:8px 25px; padding:13px 0; color:var(--ax-text-muted); font-size:10px; }
+.ep-fee-metrics b { color:var(--ax-choco); }
+.ep-fee-record { display:flex; flex-wrap:wrap; align-items:flex-end; gap:9px; padding-top:11px; border-top:1px solid var(--ax-border); }
+.ep-fee-record label { flex:1 1 150px; }
+.ep-fee-list details { color:var(--ax-brown); font-size:10px; }
+.ep-fee-list details p { color:var(--ax-text-muted); }
+.ep-portal__payment-history { width:100%; padding-top:8px; color:var(--ax-brown); border-top:1px solid var(--ax-border); font-size:10px; }
+.ep-portal__payment-history p { color:var(--ax-text-muted); }
+@media(max-width:650px){.ep-portal__head,.ep-portal__section>header{align-items:flex-start;flex-direction:column}.ep-portal__stats{grid-template-columns:1fr}.ep-portal__section header input{width:100%}.ep-attendance-list article{align-items:flex-start;flex-direction:column}.ep-fee-record .sm-button{width:100%}}
