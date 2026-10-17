@@ -2,7 +2,7 @@ import { vi } from 'vitest';
 vi.mock('../firebase', () => ({ auth: { currentUser: null } }));
 vi.mock('firebase/auth', () => ({
   EmailAuthProvider: { credential: vi.fn(() => ({ type: 'credential' })) },
-  GoogleAuthProvider: vi.fn(() => ({ providerId: 'google.com' })),
+  GoogleAuthProvider: vi.fn(function GoogleAuthProvider() { return { providerId: 'google.com' }; }),
   FacebookAuthProvider: vi.fn(), GithubAuthProvider: vi.fn(), TwitterAuthProvider: vi.fn(),
   OAuthProvider: vi.fn(), reauthenticateWithCredential: vi.fn(), reauthenticateWithPopup: vi.fn(),
 }));
@@ -14,7 +14,7 @@ import { confirmDemoEnrollment, reauthenticateCurrentStudent } from './enrollmen
 beforeEach(() => {
   vi.clearAllMocks(); auth.currentUser = null;
   EmailAuthProvider.credential.mockImplementation(() => ({ type: 'credential' }));
-  GoogleAuthProvider.mockImplementation(() => ({ providerId: 'google.com' }));
+  GoogleAuthProvider.mockImplementation(function GoogleAuthProvider() { return { providerId: 'google.com' }; });
 });
 
 test('reauthenticates the current email/password account and refreshes its token', async () => {

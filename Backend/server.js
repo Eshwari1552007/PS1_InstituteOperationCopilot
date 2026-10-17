@@ -64,4 +64,4 @@ app.use((error, req, res, _next) => {
 });
 
 const port = Number(process.env.PORT) || 5000;
-app.listen(port, () => console.log(`EDUPILOT API listening on port ${port}`));
+app.listen(port, '0.0.0.0', () => console.log(`EDUPILOT API listening on port ${port}`));

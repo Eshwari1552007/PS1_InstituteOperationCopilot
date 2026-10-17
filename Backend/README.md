@@ -13,11 +13,19 @@ Supported verified summaries include student/enrollment/course counts, low-enrol
 3. Keep your provider keys in this backend `.env`: `GEMINI_API_KEY`, `OPENAI_API_KEY`, and `DEEPSEEK_API_KEY`. Set `AI_PROVIDER` for the first provider and `AI_FALLBACK_PROVIDERS` for the next providers in priority order. Model overrides are `GEMINI_MODEL`, `OPENAI_MODEL`, and `DEEPSEEK_MODEL`; leave them blank to use defaults. Only providers actually tried receive the question/summary. Never put provider keys in the React app or commit them.
 4. Set `FRONTEND_URL=http://localhost:3000` (or a comma-separated list of trusted frontend origins).
 5. Start the API with `npm run dev` from `Backend`; it listens on port 5000 by default. Copilot returns a configuration message until a provider and matching key are set.
-6. Start the React frontend. In local development, its `/api` requests use the CRA proxy to `http://localhost:5000`.
+6. Start the React frontend. In local development, Vite proxies `/api` requests to `http://localhost:5000`.
 
 ## Production deployment
 
-Deploy this API to a trusted server that can use a service account or workload identity with the minimum required Firestore and Firebase Authentication privileges. Configure `FIREBASE_PROJECT_ID`, `FRONTEND_URL`, `PORT`, and credential binding in the hosting environment. Set the frontend build variable `REACT_APP_API_URL` to the deployed API origin, and redeploy the frontend. The Express API is not deployed by Firebase Hosting or by `firebase deploy --only firestore`.
+### Render: deploy the API and frontend separately
+
+1. Create a **Web Service** from this repository with root directory `Backend`, runtime **Node**, build command `npm ci`, and start command `npm start`. Set `NODE_VERSION=24.21.0` and `NODE_ENV=production`.
+2. Add backend environment variables in Render: `FIREBASE_PROJECT_ID`, `FRONTEND_URL` (the exact deployed frontend origin, with no trailing slash), and `FIREBASE_SERVICE_ACCOUNT_JSON` (the complete service-account JSON). Render injects `PORT`; do not hard-code it. Add your AI provider keys and provider-order settings here only. Keep `ENABLE_DEMO_PAYMENTS=false`.
+3. Create a **Static Site** from the same repository with root directory `Frontend`, build command `npm ci && npm run build`, and publish directory `dist`. Set `NODE_VERSION=24.21.0`. Add the `REACT_APP_FIREBASE_*` values from `Frontend/.env.example`, plus `REACT_APP_API_URL` set to the backend's HTTPS origin. These frontend Firebase web configuration values are public client config; never put service-account or AI provider secrets in frontend variables.
+4. Add a Static Site rewrite from `/*` to `/index.html` with action **Rewrite**, so direct visits to client-side routes load the app. Deploy the frontend, copy its public URL into the backend's `FRONTEND_URL`, then redeploy the backend.
+5. In Firebase Authentication, add the frontend's Render domain to **Authorized domains**. Publish the repository's `firestore.rules` and `firestore.indexes.json` to the same Firebase project. Check both Render deploy logs and browser network/console for startup, CORS, and Firebase errors.
+
+For `FIREBASE_SERVICE_ACCOUNT_JSON`, paste the complete JSON object as one Render secret value; keep its JSON escapes intact. The local `GOOGLE_APPLICATION_CREDENTIALS` file remains supported. Never commit either credential source or any `.env` file. The Express API is not deployed by Firebase Hosting or by `firebase deploy --only firestore`.
 
 Before using counselor-side enrollments with existing batches, run `npm run backfill:offline-counts` once from `Backend` using the configured Admin credentials. This sets each batch's `offlineEnrolledCount` from active OFFLINE enrollment records so the new counter rules correctly handle legacy batches.
 
