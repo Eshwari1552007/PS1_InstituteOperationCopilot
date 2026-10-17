@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { readAll, summarize } = require('./copilot');
+const { classifyIntent, loadData, readAll, summarize } = require('./copilot');
 
 const data = {
   students: [], courses: [{ id: 'course-python', name: 'Python' }],
@@ -118,4 +118,93 @@ test('unsupported actions are described without claiming to execute them', () =>
   const result = summarize('Delete the student record', [], { uid: 'owner', role: 'OWNER' }, data);
   assert.match(result.answer, /read-only questions/);
   assert.match(result.answer, /has not changed, deleted/);
+});
+
+const DAY_CODES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const dateWithOffset = (days) => { const date = new Date(); date.setDate(date.getDate() + days); return date; };
+const isoOf = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+
+test('answers "which lectures are scheduled tomorrow" from the recurring timetable', () => {
+  const dayCode = DAY_CODES[dateWithOffset(1).getDay()];
+  const dated = {
+    ...data,
+    batches: [{ id: 'python-a', name: 'Python Evening', weeklyTeachingHours: 4 }],
+    sessions: [{ id: 's1', batchDocId: 'python-a', day: dayCode, startMinutes: 540, endMinutes: 660, durationMinutes: 120, roomName: 'Room 1', teacherName: 'Trainer One', status: 'PUBLISHED' }],
+  };
+  const result = summarize('Which lectures are scheduled tomorrow?', [], { uid: 'owner', role: 'OWNER' }, dated);
+  assert.match(result.answer, /1 recurring session\(s\) are scheduled for/);
+  assert.match(result.answer, /Python Evening/);
+  assert.match(result.answer, /Trainer One/);
+  assert.doesNotMatch(result.answer, /read-only questions|not available for your role/);
+});
+
+test('tolerates the "tommorow" spelling in a date question', () => {
+  const dayCode = DAY_CODES[dateWithOffset(1).getDay()];
+  const dated = {
+    ...data,
+    batches: [{ id: 'python-a', name: 'Python Evening', weeklyTeachingHours: 4 }],
+    sessions: [{ id: 's1', batchDocId: 'python-a', day: dayCode, startMinutes: 540, endMinutes: 660, durationMinutes: 120, status: 'PUBLISHED' }],
+  };
+  const result = summarize('Which are the lectures scheduled tommorow?', [], { uid: 'owner', role: 'OWNER' }, dated);
+  assert.match(result.answer, /1 recurring session\(s\) are scheduled for/);
+});
+
+test('resolves a named weekday question to that weekday of the recurring timetable', () => {
+  const dated = {
+    ...data,
+    batches: [{ id: 'java-a', name: 'Java Morning', weeklyTeachingHours: 2 }],
+    sessions: [{ id: 's2', batchDocId: 'java-a', day: 'Sat', startMinutes: 600, endMinutes: 720, durationMinutes: 120, roomName: 'Room 2', teacherName: 'Trainer Two', status: 'PUBLISHED' }],
+  };
+  const result = summarize('What lectures are scheduled on Saturday?', [], { uid: 'owner', role: 'OWNER' }, dated);
+  assert.match(result.answer, /Saturday/);
+  assert.match(result.answer, /Java Morning/);
+});
+
+test('excludes recurring sessions whose batch is not active on the requested date', () => {
+  const dayCode = DAY_CODES[dateWithOffset(1).getDay()];
+  const dated = {
+    ...data,
+    batches: [{ id: 'python-a', name: 'Python Evening', weeklyTeachingHours: 4, endDate: isoOf(dateWithOffset(-1)) }],
+    sessions: [{ id: 's1', batchDocId: 'python-a', day: dayCode, startMinutes: 540, endMinutes: 660, durationMinutes: 120, status: 'PUBLISHED' }],
+  };
+  const result = summarize('Which lectures are scheduled tomorrow?', [], { uid: 'owner', role: 'OWNER' }, dated);
+  assert.match(result.answer, /No recurring timetable session is scheduled/);
+});
+
+test('classifies common questions locally without an AI round-trip', () => {
+  assert.equal(classifyIntent('Show pending fees'), 'fees');
+  assert.equal(classifyIntent('Summarize attendance'), 'attendance');
+  assert.equal(classifyIntent('Which lectures are scheduled tomorrow?'), 'timetable');
+  assert.equal(classifyIntent('Which batches have fewer students?'), 'low_enrollment');
+  assert.equal(classifyIntent('Delete the student record'), 'write_action');
+});
+
+// A spy database records which collections a load actually touches so the test can
+// prove an answer only pays for the reads it needs.
+const spyDb = (touched) => ({
+  collection(name) {
+    touched.push(name);
+    return {
+      where() { return this; }, orderBy() { return this; }, limit() { return this; }, startAfter() { return this; },
+      async get() { return { docs: [], size: 0 }; },
+    };
+  },
+});
+
+test('a fee question loads only the batches and fee collections', async () => {
+  const touched = [];
+  await loadData(spyDb(touched), { uid: 'owner', role: 'OWNER' }, 'fees');
+  assert.deepEqual(touched.sort(), ['batches', 'feeRecords']);
+});
+
+test('a count question loads batches, courses, and enrollments but not the ledgers', async () => {
+  const touched = [];
+  await loadData(spyDb(touched), { uid: 'owner', role: 'OWNER' }, 'counts');
+  assert.deepEqual(touched.sort(), ['batches', 'courses', 'enrollments']);
+});
+
+test('an unknown intent falls back to loading every collection', async () => {
+  const touched = [];
+  await loadData(spyDb(touched), { uid: 'owner', role: 'OWNER' }, '');
+  assert.deepEqual(touched.sort(), ['attendanceRecords', 'batches', 'courses', 'enrollments', 'feeRecords', 'timetableSessions']);
 });

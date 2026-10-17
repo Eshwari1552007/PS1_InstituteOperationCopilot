@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { AlertTriangle, CalendarDays, ChevronLeft, ChevronRight, DoorOpen, Grid3X3, Layers, RotateCcw, Users } from 'lucide-react';
+import { AlertTriangle, CalendarDays, ChevronLeft, ChevronRight, DoorOpen, Grid3X3, RotateCcw } from 'lucide-react';
 import { DAYS, activeRooms, filterEligibleBatches, normalizeDay, overlaps, toMinutes, weeklyHours } from './scheduler';
 
 const dateKey = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -99,8 +99,6 @@ export default function WeeklyTimetable({ profile, initialBatchId = '', batches,
   const viewTabs = [
     { key: 'week', label: 'Weekly', icon: CalendarDays },
     { key: 'room', label: 'Room-wise', icon: DoorOpen },
-    { key: 'batch', label: 'Batch-wise', icon: Layers },
-    { key: 'trainer', label: 'Trainer-wise', icon: Users },
   ];
 
   return <section className="tt-card tt-weekview">
@@ -129,17 +127,13 @@ export default function WeeklyTimetable({ profile, initialBatchId = '', batches,
     </div>}
     {!isStudent && activeFilterCount > 0 && !filteredSessions.length && <p className="tt-banner tt-banner--warn" role="status"><AlertTriangle size={15}/> No sessions match the active filters. <button type="button" className="tt-btn tt-btn--xs tt-btn--ghost" onClick={resetFilters}><RotateCcw size={12}/> Show everything</button></p>}
 
-    {view === 'week' && <div className="tt-weeknav"><div><button className="tt-icon-btn" type="button" aria-label="Previous week" onClick={() => moveWeek(-1)}><ChevronLeft size={16}/></button><button className="tt-btn tt-btn--ghost" type="button" onClick={() => setWeek(mondayOf(new Date()))}>This week</button><button className="tt-icon-btn" type="button" aria-label="Next week" onClick={() => moveWeek(1)}><ChevronRight size={16}/></button></div><strong>{weekLabel}</strong></div>}
+    {view === 'week' && <div className="tt-weeknav"><button className="tt-btn tt-btn--ghost tt-weeknav__previous" type="button" onClick={() => moveWeek(-1)}><ChevronLeft size={15}/> Previous week</button><strong>{weekLabel}</strong><div className="tt-weeknav__actions"><button className="tt-btn tt-btn--ghost" type="button" onClick={() => setWeek(mondayOf(new Date()))}>This week</button><button className="tt-btn tt-btn--ghost" type="button" onClick={() => moveWeek(1)}>Next week <ChevronRight size={15}/></button></div></div>}
 
-    {!filteredSessions.length && <p className="tt-week-empty">{isStudent && chosenBatch ? `No published sessions are scheduled for ${chosenBatch.name} in the selected week.` : activeFilterCount ? 'No saved timetable sessions match the active filters.' : 'No saved timetable sessions match this view.'}</p>}
+    {!filteredSessions.length && (view === 'week' || view === 'room') && <p className="tt-week-empty">{isStudent && chosenBatch ? `No published sessions are scheduled for ${chosenBatch.name} in the selected week.` : activeFilterCount ? 'No saved timetable sessions match the active filters.' : 'No saved timetable sessions match this view.'}</p>}
 
     {view === 'week' && slotCount > 0 && <WeekGrid {...{ open, close, step, slotCount, weekDays, settingsDays, breaks, filteredSessions, sessionsForDay, sessionMeta, timeLabel, isOwner, onEdit, onRemove }}/>}
 
     {view === 'room' && <RoomView {...{ rooms, filteredSessions, open, close, step, slotCount, weekDays, settingsDays, sessionsForDay, sessionMeta, timeLabel, isOwner, onEdit, onRemove }}/>}
-
-    {view === 'batch' && <BatchView {...{ batches, filteredSessions, sessionMeta, timeLabel, isOwner, onEdit, onRemove }}/>}
-
-    {view === 'trainer' && <TrainerView {...{ filteredSessions, batchById, sessionMeta, timeLabel, isOwner, onEdit, onRemove }}/>}
 
     {isStudent && chosenBatch && <p className="tt-week-footnote">{chosenBatch.courseName || chosenBatch.course} · {chosenBatch.name} · {chosenBatch.teacherName || 'Trainer pending'} · {chosenBatch.startDate || 'Start date pending'} to {chosenBatch.endDate || 'End date pending'}</p>}
   </section>;
@@ -165,7 +159,30 @@ function WeekGrid({ open, close, step, slotCount, weekDays, settingsDays, breaks
         const span = Math.max(1, Math.min(slotCount - row, Math.ceil((lastEnd - start) / step)));
         for (let next = row + 1; next < Math.min(slotCount, row + span); next += 1) occupied.add(`${day.key}-${next}`);
         const anyConflict = starting.some((session) => sessionMeta(session).hasConflict);
-        return <td key={day.key} rowSpan={span} className={`tt-weekgrid__event${anyConflict ? ' has-conflict' : ''}`}>{starting.map((session) => { const meta = sessionMeta(session); return <article key={session.id}><div className="tt-slot__top"><strong>{meta.title}</strong><SessionActions session={session} isOwner={isOwner} onEdit={onEdit} onRemove={onRemove}/></div><span>{meta.course}</span><small>{timeLabel(session.startMinutes)}–{timeLabel(session.endMinutes)}</small><small>{meta.teacher} · {meta.room}</small><em>{session.needsReview ? 'NEEDS REVIEW' : session.status || 'DRAFT'} · {round(meta.duration / 60)} h</em></article>; })}</td>;
+        return <td key={day.key} rowSpan={span} className={`tt-weekgrid__event${anyConflict ? ' has-conflict' : ''}`}>
+          {starting.map((session, idx) => {
+            const meta = sessionMeta(session);
+            return (
+              <div key={session.id}>
+                {idx > 0 && <hr className="tt-slot-divider" />}
+                <article className={`tt-slot${meta.hasConflict ? ' tt-slot--conflict' : ''} tt-slot--tone-${idx % 5}`}>
+                  <div className="tt-slot__top">
+                    <span className="tt-slot__name">{meta.title}</span>
+                  </div>
+                  <span className="tt-slot__course">{meta.course}</span>
+                  <span className="tt-slot__time">{timeLabel(session.startMinutes)}–{timeLabel(session.endMinutes)}</span>
+                  <span className="tt-slot__teacher">{meta.teacher}</span>
+                  <div className="tt-slot__footer">
+                    <span className={`tt-slot__status${session.needsReview ? ' is-review' : ''}`}>{session.needsReview ? 'Needs review' : session.status || 'Draft'}</span>
+                    <span className="tt-slot__duration">{round(meta.duration / 60)} h</span>
+                    <SessionActions session={session} isOwner={isOwner} onEdit={onEdit} onRemove={onRemove}/>
+                  </div>
+                  {meta.hasConflict && <span className="tt-slot__flag"><AlertTriangle size={11}/> Conflict</span>}
+                </article>
+              </div>
+            );
+          })}
+        </td>;
       }
       const pause = breaks.find((entry) => toMinutes(entry.startTime) < end && toMinutes(entry.endTime) > start);
       if (pause) return <td key={day.key} className="tt-weekgrid__break">{row === Math.floor((toMinutes(pause.startTime) - open) / step) ? pause.name : ''}</td>;
@@ -195,38 +212,29 @@ function RoomView({ rooms, filteredSessions, open, close, step, slotCount, weekD
       const lastEnd = Math.max(...cellSessions.map((session) => session.endMinutes));
       const span = Math.max(1, Math.min(slotCount - row, Math.ceil((lastEnd - start) / step)));
       for (let next = row + 1; next < row + span; next += 1) occupied.add(`${day.key}-${room.id}-${next}`);
-      return <td key={room.id} rowSpan={span} className="tt-grid__cell tt-grid__cell--occupied">{cellSessions.map((session) => { const meta = sessionMeta(session); return <article key={session.id} className={`tt-slot${meta.hasConflict ? ' tt-slot--conflict' : ''}`}><div className="tt-slot__top"><span className="tt-slot__name">{meta.title}</span><SessionActions session={session} isOwner={isOwner} onEdit={onEdit} onRemove={onRemove}/></div><span className="tt-slot__course">{meta.course}</span><span className="tt-slot__time">{timeLabel(session.startMinutes)}–{timeLabel(session.endMinutes)}</span><span className="tt-slot__teacher">{meta.teacher}</span>{meta.hasConflict && <span className="tt-slot__flag"><AlertTriangle size={11}/> Conflict</span>}</article>; })}</td>;
+      return <td key={room.id} rowSpan={span} className="tt-grid__cell tt-grid__cell--occupied">
+        {cellSessions.map((session, idx) => {
+          const meta = sessionMeta(session);
+          return (
+            <div key={session.id}>
+              {idx > 0 && <hr className="tt-slot-divider" />}
+              <article className={`tt-slot${meta.hasConflict ? ' tt-slot--conflict' : ''} tt-slot--tone-${idx % 5}`}>
+                <div className="tt-slot__top">
+                  <span className="tt-slot__name">{meta.title}</span>
+                  <SessionActions session={session} isOwner={isOwner} onEdit={onEdit} onRemove={onRemove}/>
+                </div>
+                <span className="tt-slot__course">{meta.course}</span>
+                <span className="tt-slot__time">{timeLabel(session.startMinutes)}–{timeLabel(session.endMinutes)}</span>
+                <span className="tt-slot__teacher">{meta.teacher}</span>
+                {meta.hasConflict && <span className="tt-slot__flag"><AlertTriangle size={11}/> Conflict</span>}
+              </article>
+            </div>
+          );
+        })}
+      </td>;
     })}</tr>;
   }));
   return <div className="tt-grid-wrap"><table className="tt-grid"><thead><tr><th className="tt-grid__corner">Day / time</th>{columns.map((room) => { const list = usage(room.id); const occupiedMinutes = list.reduce((sum, session) => sum + sessionMinutes(session), 0); return <th key={room.id}><span>{room.name}</span><span className="tt-grid__roomtype">{room.type} · {list.length} session(s) · {round(occupiedMinutes / 60)} h</span></th>; })}</tr></thead><tbody>{rows}</tbody></table></div>;
 }
 
-function BatchView({ batches, filteredSessions, sessionMeta, timeLabel, isOwner, onEdit, onRemove }) {
-  const active = filterEligibleBatches(batches);
-  if (!active.length) return <p className="tt-week-empty">No active batches are available for this view.</p>;
-  return <div className="tt-batchview">{active.map((batch) => {
-    const required = weeklyHours(batch);
-    const list = filteredSessions.filter((session) => session.batchDocId === batch.documentId).sort((a, b) => DAYS.findIndex((day) => day.key === a.day) - DAYS.findIndex((day) => day.key === b.day) || a.startMinutes - b.startMinutes);
-    const scheduledMinutes = list.reduce((sum, session) => sum + sessionMinutes(session), 0);
-    const scheduled = round(scheduledMinutes / 60);
-    const missing = required ? round(Math.max(0, required - scheduled)) : 0;
-    const complete = required && scheduled >= required;
-    return <article className="tt-batchcard" key={batch.documentId}><div className="tt-batchcard__head"><div><p className="tt-batchcard__name">{batch.name}</p><p className="tt-batchcard__meta">{batch.courseName || batch.course || 'Course not linked'} · {batch.teacherName || batch.teacherId || 'Trainer pending'}</p></div><span className={`tt-pill ${complete ? 'tt-pill--good' : missing || !required ? 'tt-pill--warn' : 'tt-pill--bad'}`}>{required ? `${scheduled} / ${required} h` : 'Hours not set'}</span></div>{list.length ? <ul className="tt-batchcard__list">{list.map((session) => { const meta = sessionMeta(session); return <li key={session.id}><span className="tt-batchcard__day">{session.day}</span><span className="tt-batchcard__time">{timeLabel(session.startMinutes)}–{timeLabel(session.endMinutes)}</span><span className="tt-batchcard__room"><DoorOpen size={12}/>{meta.room} · {meta.teacher}</span><SessionActions session={session} isOwner={isOwner} onEdit={onEdit} onRemove={onRemove}/></li>; })}</ul> : <p className="tt-batchcard__empty">No sessions scheduled for this batch yet.</p>}{required ? <p className="tt-batchcard__meta">{complete ? 'Weekly requirement fully scheduled.' : `${missing} h of ${required} h still unscheduled.`}</p> : null}</article>;
-  })}</div>;
-}
 
-function TrainerView({ filteredSessions, batchById, sessionMeta, timeLabel, isOwner, onEdit, onRemove }) {
-  const groups = new Map();
-  for (const session of filteredSessions) {
-    const key = session.teacherId || 'unassigned';
-    if (!groups.has(key)) groups.set(key, { name: session.teacherName || session.teacherId || 'Unassigned trainer', sessions: [] });
-    groups.get(key).sessions.push(session);
-  }
-  if (!groups.size) return <p className="tt-week-empty">No trainer sessions match this view.</p>;
-  return <div className="tt-batchview">{[...groups.entries()].map(([id, group]) => {
-    const list = [...group.sessions].sort((a, b) => DAYS.findIndex((day) => day.key === a.day) - DAYS.findIndex((day) => day.key === b.day) || a.startMinutes - b.startMinutes);
-    const conflict = list.some((a, index) => list.slice(index + 1).some((b) => a.day === b.day && overlaps(a.startMinutes, a.endMinutes, b.startMinutes, b.endMinutes)));
-    const totalHours = round(list.reduce((sum, session) => sum + sessionMinutes(session), 0) / 60);
-    return <article className="tt-batchcard" key={id}><div className="tt-batchcard__head"><div><p className="tt-batchcard__name">{group.name}</p><p className="tt-batchcard__meta">{list.length} session(s) · {totalHours} h/week</p></div>{conflict ? <span className="tt-pill tt-pill--bad">Conflict</span> : <span className="tt-pill tt-pill--good">Clear</span>}</div><ul className="tt-batchcard__list">{list.map((session) => { const meta = sessionMeta(session); return <li key={session.id}><span className="tt-batchcard__day">{session.day}</span><span className="tt-batchcard__time">{timeLabel(session.startMinutes)}–{timeLabel(session.endMinutes)}</span><span className="tt-batchcard__room"><DoorOpen size={12}/>{meta.room} · {batchById.get(session.batchDocId)?.name || session.batchName}</span><SessionActions session={session} isOwner={isOwner} onEdit={onEdit} onRemove={onRemove}/></li>; })}</ul></article>;
-  })}</div>;
-}

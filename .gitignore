@@ -1,9 +1,12 @@
 Prompt.txt
 node_modules/
 .env
+.env.*
+!.env.example
 server/.env
 Backend/.env
 Backend/node_modules/
 Backend/config/serviceAccountKey.json
 Backend/config/*.json
 server/mongodb-data/
+Frontend/dist/

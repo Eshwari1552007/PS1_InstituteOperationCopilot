@@ -205,7 +205,7 @@ service cloud.firestore {
           || (request.resource.data.enrolledCount == resource.data.enrolledCount - 1
               && get(/databases/$(database)/documents/enrollments/$(request.resource.data.lastEnrollmentMutationId)).data.status == 'ACTIVE'
               && getAfter(/databases/$(database)/documents/enrollments/$(request.resource.data.lastEnrollmentMutationId)).data.status in ['TRANSFERRED', 'WITHDRAWN']
-              && request.resource.data.offlineEnrolledCount == (('offlineEnrolledCount' in resource.data) ? resource.data.offlineEnrolledCount : (get(/databases/$(database)/documents/enrollments/$(request.resource.data.lastEnrollmentMutationId)).data.learningMode == 'OFFLINE' ? resource.data.enrolledCount : 0)) - (get(/databases/$(database)/documents/enrollments/$(request.resource.data.lastEnrollmentMutationId)).data.learningMode == 'OFFLINE' ? 1 : 0)))));
+              && request.resource.data.offlineEnrolledCount == (('offlineEnrolledCount' in resource.data) ? resource.data.offlineEnrolledCount : (get(/databases/$(database)/documents/enrollments/$(request.resource.data.lastEnrollmentMutationId)).data.learningMode == 'OFFLINE' ? resource.data.enrolledCount : 0)) - (get(/databases/$(database)/documents/enrollments/$(request.resource.data.lastEnrollmentMutationId)).data.learningMode == 'OFFLINE' ? 1 : 0))));
     }
 
     match /enrollments/{enrollmentId} {
@@ -232,7 +232,7 @@ service cloud.firestore {
                 : get(/databases/$(database)/documents/batches/$(request.resource.data.batchDocId)).data.enrolledCount)
             < (('offlineCapacity' in get(/databases/$(database)/documents/batches/$(request.resource.data.batchDocId)).data)
               ? get(/databases/$(database)/documents/batches/$(request.resource.data.batchDocId)).data.offlineCapacity
-              : get(/databases/$(database)/documents/batches/$(request.resource.data.batchDocId)).data.capacity))
+              : get(/databases/$(database)/documents/batches/$(request.resource.data.batchDocId)).data.capacity)))
         && getAfter(/databases/$(database)/documents/batches/$(request.resource.data.batchDocId)).data.enrolledCount
           == get(/databases/$(database)/documents/batches/$(request.resource.data.batchDocId)).data.enrolledCount + 1
         && getAfter(/databases/$(database)/documents/students/$(request.resource.data.studentDocId)).data.studentId == request.resource.data.studentId
@@ -300,6 +300,7 @@ service cloud.firestore {
       allow get: if isOwner() || isCounselor() || isStudent();
       allow create: if (sequenceId.matches('^student-[0-9]{4}$') && (isOwner() || isCounselor() || isStudent())
         && request.resource.data.lastNumber == 1
+        && (!isStudent() || request.resource.data.lastStudentDocId == request.auth.uid)
         && request.resource.data.updatedAt == request.time
         && request.resource.data.lastStudentId.matches('^STU-[0-9]{4}-[0-9]{4,}$')
         && existsAfter(/databases/$(database)/documents/students/$(request.resource.data.lastStudentDocId))
@@ -310,6 +311,7 @@ service cloud.firestore {
         && request.resource.data.lastNumber == 1 && request.resource.data.updatedAt == request.time;
       allow update: if sequenceId.matches('^student-[0-9]{4}$') && (isOwner() || isCounselor() || isStudent())
         && request.resource.data.lastNumber == resource.data.lastNumber + 1
+        && (!isStudent() || request.resource.data.lastStudentDocId == request.auth.uid)
         && request.resource.data.updatedAt == request.time
         && request.resource.data.lastStudentId.matches('^STU-[0-9]{4}-[0-9]{4,}$')
         && existsAfter(/databases/$(database)/documents/students/$(request.resource.data.lastStudentDocId))
@@ -459,11 +461,15 @@ service cloud.firestore {
     }
 
     match /timetableSessions/{sessionId} {
-      allow get: if isOwner() || isTrainer()
+      // Owners and Counselors may review the published/draft weekly schedule for the
+      // batches they already manage (isStudentManager), which the attendance roster
+      // and timetable views both read. Trainers keep full read; students stay scoped
+      // to their own enrolled, published batch sessions.
+      allow get: if isStudentManager() || isTrainer()
         || (isStudent() && exists(/databases/$(database)/documents/enrollments/$(request.auth.uid + '__' + resource.data.batchDocId))
           && get(/databases/$(database)/documents/enrollments/$(request.auth.uid + '__' + resource.data.batchDocId)).data.status == 'ACTIVE'
           && resource.data.status == 'PUBLISHED');
-      allow list: if isOwner() || isTrainer()
+      allow list: if isStudentManager() || isTrainer()
         || (isStudent() && resource.data.status == 'PUBLISHED'
           && exists(/databases/$(database)/documents/enrollments/$(request.auth.uid + '__' + resource.data.batchDocId))
           && get(/databases/$(database)/documents/enrollments/$(request.auth.uid + '__' + resource.data.batchDocId)).data.status == 'ACTIVE');

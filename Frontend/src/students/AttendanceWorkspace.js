@@ -25,11 +25,37 @@ const STATUS_STYLES = {
   CANCELLED: { label: 'Cancelled', className: 'is-cancelled' },
 };
 
+// Turn a raw Firestore failure into a message that matches the real cause, so a
+// trainer is never told the generic "only the assigned Trainer or Owner" line when
+// the actual problem is an unassigned trainer, a missing index, or the network.
+const describeAttendanceError = (failure, role, context) => {
+  const code = failure?.code || '';
+  if (code === 'permission-denied') {
+    if (context === 'batches') {
+      return role === 'TRAINER'
+        ? 'Firestore denied access to your assigned batches. Confirm your trainer account is approved and the deployed rules are current.'
+        : 'Firestore denied access to the batch list. Confirm your account is approved and the deployed rules are current.';
+    }
+    if (context === 'open') {
+      return role === 'TRAINER'
+        ? 'You are not the assigned trainer for this lecture, so attendance cannot be opened. Ask the Owner to confirm this batch\'s assigned trainer.'
+        : 'Only the assigned Trainer or an Owner can open attendance for this lecture.';
+    }
+    if (role === 'TRAINER') return 'Firestore denied this batch roster. Confirm you are the assigned trainer for this batch and the deployed rules are current.';
+    if (role === 'COUNSELOR') return 'Firestore denied this batch roster for your counselor account. Confirm your account is approved and the deployed rules are current.';
+    return 'Firestore denied this batch roster. Confirm you are authorized for this batch and the deployed rules are current.';
+  }
+  if (code === 'failed-precondition') return 'This view needs a Firestore index that is not deployed yet. Ask the Owner to deploy firestore.indexes.json, then retry.';
+  if (code === 'unavailable') return 'The database is unreachable right now. Check your connection and retry.';
+  if (code === 'unauthenticated') return 'Your session expired. Sign in again and retry.';
+  return failure?.message || 'The request failed for an unexpected reason.';
+};
+
 export default function AttendanceWorkspace({ profile }) {
   const toast = useToast();
   const isManager = ['OWNER', 'COUNSELOR'].includes(profile.role);
-  // Existing Firestore rules let counselors read attendance but only Owners and
-  // the assigned Trainer write it, so counselors get a read-only view.
+  // Existing Firestore rules let Owners and the assigned Trainer write attendance.
+  // Counselors may open the batch roster for review but cannot mark or save records.
   const canRecord = profile.role === 'OWNER' || profile.role === 'TRAINER';
   const [batches, setBatches] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -61,8 +87,13 @@ export default function AttendanceWorkspace({ profile }) {
       const list = (workspace.batches || []).filter((batch) => !batch.isArchived);
       setBatches(list);
       setBatchId((current) => (current && list.some((batch) => batch.documentId === current) ? current : (list[0]?.documentId || '')));
+      if (profile.role === 'TRAINER' && !list.length) {
+        // Profile mapping issue: the signed-in trainer has no batch assigned to their UID.
+        const text = 'Your signed-in account is not linked to any batch as its assigned trainer. Ask the Owner to assign you to a batch.';
+        setError(text); toast.error(text, 'Attendance');
+      }
     } catch (failure) {
-      const text = failure.code === 'permission-denied' ? 'Firestore denied batch access. Confirm your role and the deployed rules.' : failure.message;
+      const text = describeAttendanceError(failure, profile.role, 'batches');
       setError(text); toast.error(text, 'Attendance');
     } finally { setLoading(false); }
   }, [profile.role, profile.uid, toast]);
@@ -76,22 +107,34 @@ export default function AttendanceWorkspace({ profile }) {
       const sessionConstraints = [where('batchDocId', '==', batchId)];
       const enrollmentConstraints = [where('batchDocId', '==', batchId), where('status', '==', 'ACTIVE')];
       const recordConstraints = [where('batchDocId', '==', batchId)];
+      // Firestore rules are not filters: a trainer may only list rows that carry their
+      // own teacherId, so every trainer query is constrained to the assigned trainer.
+      // Owners and counselors are authorized institute-wide and query the batch only.
       if (profile.role === 'TRAINER') {
         entryConstraints.push(where('teacherId', '==', profile.uid));
         sessionConstraints.push(where('teacherId', '==', profile.uid));
         enrollmentConstraints.push(where('teacherId', '==', profile.uid));
         recordConstraints.push(where('teacherId', '==', profile.uid));
       }
-      const [entrySnap, sessionSnap, rosterSnap, recordSnap] = await Promise.all([
+      const queries = [
         getDocs(query(collection(db, 'timetableSessions'), ...entryConstraints)),
         getDocs(query(collection(db, 'attendanceSessions'), ...sessionConstraints)),
         getDocs(query(collection(db, 'enrollments'), ...enrollmentConstraints)),
         getDocs(query(collection(db, 'attendanceRecords'), ...recordConstraints)),
-      ]);
+      ];
+      const results = await Promise.all(queries.map((q) => q.catch((err) => {
+        console.error('Attendance roster partial failure:', err);
+        return { docs: [], partial: true, error: err };
+      })));
+      const [entrySnap, sessionSnap, rosterSnap, recordSnap] = results;
+
+      if (rosterSnap.partial) {
+        // The roster (enrollments) is the core of this view; if it fails, we show the error.
+        throw rosterSnap.error;
+      }
+
       setEntries(entrySnap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((entry) => entry.status === 'PUBLISHED'));
       setSessions(sessionSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
-      // Enrollment doc ids are `${studentDocId}__${batchDocId}`; the student uid is the stable key
-      // used by attendanceRecords and by the Firestore rules, so resolve it explicitly.
       setRoster(rosterSnap.docs.map((d) => {
         const data = d.data();
         return { enrollmentId: d.id, ...data, studentDocId: data.studentDocId || d.id.split('__')[0] };
@@ -99,8 +142,12 @@ export default function AttendanceWorkspace({ profile }) {
       const grouped = {};
       recordSnap.docs.forEach((d) => { const record = { documentId: d.id, ...d.data() }; (grouped[record.sessionId] ||= []).push(record); });
       setRecordsBySession(grouped);
+
+      if (results.some((r) => r.partial)) {
+        toast.warn('Some lecture or attendance data could not be loaded due to permissions. Roster is still visible.', 'Attendance');
+      }
     } catch (failure) {
-      const text = failure.code === 'permission-denied' ? 'Firestore denied this batch roster. Confirm you are assigned to this batch and the deployed rules are current.' : failure.message;
+      const text = describeAttendanceError(failure, profile.role, 'roster');
       setError(text); toast.error(text, 'Attendance');
     } finally { setLoading(false); }
   }, [batchId, profile.role, profile.uid, toast]);
@@ -162,6 +209,16 @@ export default function AttendanceWorkspace({ profile }) {
   const openLecture = lectures.find((lecture) => lecture.key === openKey) || null;
 
   const openRoster = async (lecture) => {
+    // Counselors have read-only review access: open the roster without creating or
+    // writing an attendance session (the security rules do not allow them to create one).
+    if (!canRecord) {
+      setError('');
+      const saved = lecture.session ? (recordsBySession[lecture.session.id] || []) : [];
+      setDraft(Object.fromEntries(saved.map((record) => [record.studentDocId, record.status])));
+      setOpenKey(lecture.key); setRosterSearch(''); setRosterFilter('ALL');
+      toast.info('Roster opened in read-only mode. Counselors can review attendance but cannot record it.', 'View roster');
+      return;
+    }
     const start = atTime(date, lecture.startTime);
     if (now < start.getTime()) { toast.warning('Attendance opens at the scheduled start time.', 'Not yet available'); return; }
     if (!lecture.entry) { toast.error('This session is not linked to a published timetable class. Contact the Owner.', 'Cannot open roster'); return; }
@@ -172,17 +229,22 @@ export default function AttendanceWorkspace({ profile }) {
       if (!session) {
         const sessionId = `att__${batchId}__${date}__${lecture.entry.id}`;
         const ref = doc(db, 'attendanceSessions', sessionId);
-        const snapshot = await getDoc(ref);
-        if (snapshot.exists()) session = { id: ref.id, ...snapshot.data() };
-        else {
-          const payload = {
-            batchDocId: batchId, batchId: batch?.batchId || '', courseDocId: batch?.courseDocId || '',
-            teacherId: batch?.teacherId || lecture.entry.teacherId || profile.uid, scheduledSessionId: lecture.entry.id,
-            date, sessionAt: Timestamp.fromDate(start), startTime: lecture.startTime, endTime: lecture.endTime,
-            status: 'OPEN', createdBy: profile.uid, createdAt: serverTimestamp(),
-          };
+        const payload = {
+          batchDocId: batchId, batchId: batch?.batchId || '', courseDocId: batch?.courseDocId || '',
+          teacherId: batch?.teacherId || lecture.entry.teacherId || profile.uid, scheduledSessionId: lecture.entry.id,
+          date, sessionAt: Timestamp.fromDate(start), startTime: lecture.startTime, endTime: lecture.endTime,
+          status: 'OPEN', createdBy: profile.uid, createdAt: serverTimestamp(),
+        };
+        // Create directly; a pre-read of a not-yet-created document is denied because
+        // the rules need resource.data.teacherId, which only exists once it is written.
+        try {
           await setDoc(ref, payload);
           session = { id: ref.id, ...payload };
+        } catch (createFailure) {
+          // Another device may have opened this lecture first; read the now-existing doc back.
+          const snapshot = await getDoc(ref).catch(() => null);
+          if (!snapshot?.exists()) throw createFailure;
+          session = { id: ref.id, ...snapshot.data() };
         }
         setSessions((current) => (current.some((item) => item.id === session.id) ? current : [...current, session]));
       }
@@ -191,9 +253,7 @@ export default function AttendanceWorkspace({ profile }) {
       setOpenKey(lecture.key); setRosterSearch(''); setRosterFilter('ALL');
       toast.info('Roster opened. Mark each student, then save once.', 'Take attendance');
     } catch (failure) {
-      const text = failure.code === 'permission-denied'
-        ? 'Only the assigned Trainer or Owner can open attendance for this lecture.'
-        : (failure.message || 'The roster could not be opened.');
+      const text = describeAttendanceError(failure, profile.role, 'open');
       setError(text); toast.error(text, 'Attendance');
     } finally { setBusy(''); }
   };
@@ -333,6 +393,9 @@ export default function AttendanceWorkspace({ profile }) {
         const stats = statsFor(lecture);
         const startMs = atTime(date, lecture.startTime).getTime();
         const canTake = canRecord && now >= startMs && lecture.session?.status !== 'CANCELLED' && Boolean(lecture.entry);
+        // Counselors may always review the batch roster; trainers/owners only once the
+        // lecture is published and has started.
+        const canOpen = canTake || !canRecord;
         return <article className={`ep-att-card ${status.className}`} key={lecture.key}>
           <header>
             <div>
@@ -353,8 +416,8 @@ export default function AttendanceWorkspace({ profile }) {
           </div>
           {lecture.needsReview && <p className="ep-att-warning"><AlertCircle size={14}/> This timetable entry is flagged for review; confirm the details with the Owner before marking.</p>}
           <footer>
-            <button type="button" className="sm-button sm-button--primary" disabled={!canTake || busy === 'open'} onClick={() => openRoster(lecture)}>
-              <ClipboardCheck size={14}/>{busy === 'open' && openKey === lecture.key ? 'Opening…' : lecture.session ? 'Open roster' : 'Take attendance'}
+            <button type="button" className="sm-button sm-button--primary" disabled={!canOpen || busy === 'open'} onClick={() => openRoster(lecture)}>
+              <ClipboardCheck size={14}/>{busy === 'open' && openKey === lecture.key ? 'Opening…' : !canRecord ? 'View roster' : lecture.session ? 'Open roster' : 'Take attendance'}
             </button>
             {!canRecord && <span className="ep-att-hint">Read-only: counselors cannot record attendance.</span>}
             {canRecord && !canTake && lecture.session?.status !== 'CANCELLED' && <span className="ep-att-hint">{now < startMs ? 'Available at the scheduled start time.' : 'Link this lecture to a published timetable class first.'}</span>}
@@ -365,11 +428,11 @@ export default function AttendanceWorkspace({ profile }) {
       })}</div> : <p className="ep-portal__empty">{entries.length ? `No published lectures are scheduled on ${weekdayName(date)} for this batch.` : 'This batch has no published timetable yet. Ask the Owner to publish the schedule.'}</p>}
     </>}
 
-    {openLecture?.session && <section className="ep-portal__section ep-att-roster">
+    {openLecture && <section className="ep-portal__section ep-att-roster">
       <header>
         <div>
           <h2>Roster · {openLecture.startTime}–{openLecture.endTime}</h2>
-          <p>{roster.length} enrolled · {offlineCount} offline · {onlineCount} online · {markedCount} marked</p>
+          <p>{roster.length} enrolled · {offlineCount} offline · {onlineCount} online · {markedCount} marked{!canRecord && ' · read-only review'}</p>
         </div>
         <button type="button" className="sm-button sm-button--quiet" onClick={() => setOpenKey('')}>Close</button>
       </header>
@@ -383,13 +446,13 @@ export default function AttendanceWorkspace({ profile }) {
           <option value="UNMARKED">Unmarked</option>
         </select>
       </div>
-      <div className="ep-att-bulk">
+      {canRecord && <div className="ep-att-bulk">
         <span>Quick mark (applies to students in the current filter):</span>
         <button type="button" className="sm-button sm-button--primary" onClick={() => bulkMark('PRESENT')}>Present all</button>
         <button type="button" className="sm-button sm-button--danger" onClick={() => bulkMark('ABSENT')}>Absent all</button>
         <button type="button" className="sm-button sm-button--quiet" onClick={() => { setDraft({}); toast.info('All marks cleared. Nothing is saved until you save.', 'Roster cleared'); }}>Clear marks</button>
-      </div>
-      {openLecture.session.status === 'CANCELLED' ? <p className="ep-inline-error">This lecture is cancelled. Attendance is locked.</p> : filteredRoster.length ? <div className="ep-att-roster-list">
+      </div>}
+      {openLecture.session?.status === 'CANCELLED' ? <p className="ep-inline-error">This lecture is cancelled. Attendance is locked.</p> : filteredRoster.length ? <div className="ep-att-roster-list">
         {filteredRoster.map((student, index) => {
           const mark = draft[student.studentDocId] || '';
           return <article key={student.enrollmentId}>
@@ -398,18 +461,20 @@ export default function AttendanceWorkspace({ profile }) {
               <span>#{index + 1} · {student.studentId} · {student.learningMode || 'OFFLINE'} · {student.learningMode === 'ONLINE' ? 'manual online review' : 'classroom roll'}</span>
             </div>
             <div className="ep-att-mark" role="group" aria-label={`Attendance for ${student.studentName || student.studentId}`}>
-              {STATES.map((state) => <button key={state} type="button" disabled={busy === 'save'} aria-pressed={mark === state}
+              {STATES.map((state) => <button key={state} type="button" disabled={!canRecord || busy === 'save'} aria-pressed={mark === state}
                 className={`ep-att-mark__btn is-${state.toLowerCase()}${mark === state ? ' is-active' : ''}${state === 'PRESENT' || state === 'ABSENT' ? ' is-primary-option' : ''}`}
-                title={mark === state ? `Clear ${STATE_LABELS[state]} (back to Unmarked)` : `Mark ${STATE_LABELS[state]}`}
-                onClick={() => setMark(student.studentDocId, state)}>{STATE_LABELS[state]}</button>)}
+                title={!canRecord ? 'Read-only: counselors cannot record attendance.' : mark === state ? `Clear ${STATE_LABELS[state]} (back to Unmarked)` : `Mark ${STATE_LABELS[state]}`}
+                onClick={() => canRecord && setMark(student.studentDocId, state)}>{STATE_LABELS[state]}</button>)}
               <span className={`ep-att-mark__state${mark ? ' is-set' : ''}`}>{mark ? STATE_LABELS[mark] : 'Unmarked'}</span>
             </div>
           </article>;
         })}
       </div> : <p className="ep-portal__empty">No students match this search or filter.</p>}
       <footer className="ep-att-save">
-        <span>Draft: Present {draftCounts.PRESENT} · Absent {draftCounts.ABSENT} · Late {draftCounts.LATE} · Excused {draftCounts.EXCUSED} · Unmarked {Math.max(0, roster.length - markedCount)}</span>
-        <button type="button" className="sm-button sm-button--primary" disabled={!canRecord || busy === 'save' || openLecture.session.status !== 'OPEN' || !markedCount} onClick={requestSave}>{busy === 'save' ? 'Saving…' : 'Save attendance'}</button>
+        {canRecord
+          ? <><span>Draft: Present {draftCounts.PRESENT} · Absent {draftCounts.ABSENT} · Late {draftCounts.LATE} · Excused {draftCounts.EXCUSED} · Unmarked {Math.max(0, roster.length - markedCount)}</span>
+            <button type="button" className="sm-button sm-button--primary" disabled={busy === 'save' || openLecture.session?.status !== 'OPEN' || !markedCount} onClick={requestSave}>{busy === 'save' ? 'Saving…' : 'Save attendance'}</button></>
+          : <><span>Read-only review · {markedCount} student(s) marked for this lecture.</span><span className="ep-att-hint">Counselors cannot save attendance.</span></>}
       </footer>
     </section>}
 

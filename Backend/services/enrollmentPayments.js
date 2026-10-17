@@ -21,12 +21,33 @@ function validateAdvance(amountValue, feeValue) {
   return { ok: true, fee, amount, minimum, remaining: fee - amount };
 }
 
+function validateInstallmentRequest(amountValue, totalValue, paidValue, balanceValue) {
+  const total = toMinorUnits(totalValue);
+  const paid = toMinorUnits(paidValue);
+  const balance = toMinorUnits(balanceValue);
+  const amount = toMinorUnits(amountValue);
+  if (total === null || total <= 0 || paid === null || balance === null || total - paid !== balance) {
+    return { ok: false, code: 'FEE_RECORD_INVALID', error: 'The fee balance is inconsistent. Reconcile the fee record before requesting payment.' };
+  }
+  if (amount === null || amount <= 0) {
+    return { ok: false, code: 'AMOUNT_INVALID', error: 'Enter a valid positive installment amount (up to two decimals).' };
+  }
+  if (amount > balance) {
+    return { ok: false, code: 'AMOUNT_TOO_HIGH', error: 'The installment cannot exceed the remaining balance.' };
+  }
+  return { ok: true, total, paid, balance, amount };
+}
+
 function hasRecentAuthentication(authTime, nowSeconds = Date.now() / 1000, maxAgeSeconds = 300) {
   return Number.isFinite(Number(authTime)) && Number(authTime) <= nowSeconds && nowSeconds - Number(authTime) <= maxAgeSeconds;
+}
+
+function demoPaymentsAllowed(nodeEnv = process.env.NODE_ENV, enabled = process.env.ENABLE_DEMO_PAYMENTS) {
+  return nodeEnv !== 'production' || enabled === 'true';
 }
 
 function paymentIdFor(uid, requestId) {
   return `demo_${crypto.createHash('sha256').update(`${uid}\0${requestId}`).digest('hex')}`;
 }
 
-module.exports = { toMinorUnits, validateAdvance, paymentIdFor, hasRecentAuthentication };
+module.exports = { toMinorUnits, validateAdvance, validateInstallmentRequest, paymentIdFor, hasRecentAuthentication, demoPaymentsAllowed };

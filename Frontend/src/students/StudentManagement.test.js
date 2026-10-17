@@ -1,14 +1,15 @@
+import { vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import StudentManagement from './StudentManagement';
 import { listStudents, removeStudent, saveStudent } from './studentService';
 import { getEnrollmentOptions } from '../batches/academyService';
 
-jest.mock('./studentService', () => ({
-  listStudents: jest.fn(),
-  removeStudent: jest.fn(),
-  saveStudent: jest.fn(),
+vi.mock('./studentService', () => ({
+  listStudents: vi.fn(),
+  removeStudent: vi.fn(),
+  saveStudent: vi.fn(),
 }));
-jest.mock('../batches/academyService', () => ({ getBatchDurationHours: jest.fn((batch) => batch?.durationHours || 1), getEnrollmentOptions: jest.fn() }));
+vi.mock('../batches/academyService', () => ({ getBatchDurationHours: vi.fn((batch) => batch?.durationHours || 1), getEnrollmentOptions: vi.fn() }));
 
 const options = {
   courses: [{ documentId: 'course-doc-1', courseId: 'CRS-2026-0001', name: 'Science', status: 'ACTIVE' }],
@@ -21,7 +22,7 @@ const students = [
 ];
 
 beforeEach(() => {
-  jest.clearAllMocks();
+  vi.clearAllMocks();
   listStudents.mockResolvedValue({ records: students, warnings: [] });
   getEnrollmentOptions.mockResolvedValue(options);
 });

@@ -14,7 +14,7 @@ async function request(path, body, forceRefresh = false) {
   const user = auth.currentUser;
   if (!user) throw Object.assign(new Error('Sign in again to continue.'), { code: 'AUTH_REQUIRED' });
   const token = await user.getIdToken(forceRefresh);
-  const baseUrl = (process.env.REACT_APP_API_URL || '').replace(/\/$/, '');
+  const baseUrl = (import.meta.env.REACT_APP_API_URL || '').replace(/\/$/, '');
   const response = await fetch(`${baseUrl}/api/enrollment${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
@@ -51,3 +51,4 @@ export async function reauthenticateCurrentStudent(password) {
 export const confirmDemoEnrollment = (payload) => request('/confirm-demo', payload, true);
 
 export const payInstallment = (payload) => request('/installment', payload, true);
+export const verifyPendingInstallment = (paymentId) => request('/installment/verify', { paymentId }, true);

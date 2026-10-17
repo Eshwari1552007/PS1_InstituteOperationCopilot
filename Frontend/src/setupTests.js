@@ -1,4 +1,4 @@
-import '@testing-library/jest-dom';
+import '@testing-library/jest-dom/vitest';
 
 // jsdom lacks these browser APIs that the ambient/auth layers rely on.
 if (!window.matchMedia) {

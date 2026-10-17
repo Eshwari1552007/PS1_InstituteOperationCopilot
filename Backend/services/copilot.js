@@ -21,10 +21,41 @@ async function readAll(db, name, constraints = []) {
   return { records, truncated: true };
 }
 
-async function loadData(db, profile) {
+// Collections each intent can actually use. Attendance and fee ledgers are the largest
+// collections, so skipping the ones an answer never reads keeps the Copilot responsive
+// on large institutes without changing a single figure the summary reports.
+const NEEDS_BY_INTENT = {
+  fees: ['batches', 'fees'],
+  attendance: ['batches', 'attendance'],
+  timetable: ['batches', 'sessions'],
+  conflicts: ['batches', 'sessions'],
+  trainer_workload: ['batches', 'sessions'],
+  missing_hours: ['batches', 'sessions'],
+  low_enrollment: ['batches', 'enrollments'],
+  counts: ['batches', 'enrollments', 'courses'],
+  courses: ['courses'],
+  attention: ['batches', 'enrollments', 'fees'],
+};
+
+const ALL_COLLECTIONS = ['batches', 'courses', 'enrollments', 'fees', 'attendance', 'sessions'];
+
+function requiredCollections(role, intent) {
+  // An unknown intent must never silently load nothing, so fall back to a full load.
+  if (!intent) return new Set(ALL_COLLECTIONS);
+  const needs = new Set(NEEDS_BY_INTENT[intent] || []);
+  // Trainers and students read batches, courses, and sessions through their own
+  // enrollment records, so the roster has to load before the derived reads resolve.
+  if (role === 'STUDENT' && (needs.has('batches') || needs.has('sessions'))) needs.add('enrollments');
+  if (needs.has('courses') && (role === 'STUDENT' || role === 'TRAINER')) needs.add('batches');
+  return needs;
+}
+
+async function loadData(db, profile, intent = '') {
   const { uid, role } = profile;
+  const needs = requiredCollections(role, intent);
   const truncated = [];
   const load = async (key, collection, constraints = []) => {
+    if (!needs.has(key)) return [];
     const result = await readAll(db, collection, constraints);
     if (result.truncated) truncated.push(key);
     return result.records;
@@ -40,23 +71,29 @@ async function loadData(db, profile) {
       load('batches', 'batches', [{ field: 'teacherId', op: '==', value: uid }]),
       load('enrollments', 'enrollments', [{ field: 'teacherId', op: '==', value: uid }, { field: 'status', op: '==', value: 'ACTIVE' }]),
     ]);
-    const courseIds = [...new Set(data.batches.map((batch) => batch.courseDocId).filter(Boolean))];
-    data.courses = (await Promise.all(courseIds.map(async (id) => {
-      const snap = await db.collection('courses').doc(id).get();
-      return snap.exists ? { id: snap.id, name: snap.data().name } : null;
-    }))).filter(Boolean);
+    if (needs.has('courses')) {
+      const courseIds = [...new Set(data.batches.map((batch) => batch.courseDocId).filter(Boolean))];
+      data.courses = (await Promise.all(courseIds.map(async (id) => {
+        const snap = await db.collection('courses').doc(id).get();
+        return snap.exists ? { id: snap.id, name: snap.data().name } : null;
+      }))).filter(Boolean);
+    }
   } else if (role === 'STUDENT') {
     data.enrollments = await load('enrollments', 'enrollments', [{ field: 'studentDocId', op: '==', value: uid }, { field: 'status', op: '==', value: 'ACTIVE' }]);
-    const batchIds = [...new Set(data.enrollments.map((item) => item.batchDocId).filter(Boolean))];
-    data.batches = (await Promise.all(batchIds.map(async (id) => {
-      const snap = await db.collection('batches').doc(id).get();
-      return snap.exists ? { id: snap.id, ...snap.data() } : null;
-    }))).filter(Boolean);
-    const courseIds = [...new Set(data.batches.map((batch) => batch.courseDocId).filter(Boolean))];
-    data.courses = (await Promise.all(courseIds.map(async (id) => {
-      const snap = await db.collection('courses').doc(id).get();
-      return snap.exists ? { id: snap.id, ...snap.data() } : null;
-    }))).filter(Boolean);
+    if (needs.has('batches')) {
+      const batchIds = [...new Set(data.enrollments.map((item) => item.batchDocId).filter(Boolean))];
+      data.batches = (await Promise.all(batchIds.map(async (id) => {
+        const snap = await db.collection('batches').doc(id).get();
+        return snap.exists ? { id: snap.id, ...snap.data() } : null;
+      }))).filter(Boolean);
+    }
+    if (needs.has('courses')) {
+      const courseIds = [...new Set(data.batches.map((batch) => batch.courseDocId).filter(Boolean))];
+      data.courses = (await Promise.all(courseIds.map(async (id) => {
+        const snap = await db.collection('courses').doc(id).get();
+        return snap.exists ? { id: snap.id, ...snap.data() } : null;
+      }))).filter(Boolean);
+    }
   } else if (role === 'ACCOUNTS') {
     // Accounts can inspect fee and payment records, but not student rosters.
   }
@@ -79,7 +116,7 @@ async function loadData(db, profile) {
       data.sessions = snapshots.flat();
     }
   }
-  data.batches = data.batches.map(({ id, name, batchName, batchId, courseDocId, courseName, weeklyTeachingHours, teacherId }) => ({ id, name, batchName, batchId, courseDocId, courseName, weeklyTeachingHours, teacherId }));
+  data.batches = data.batches.map(({ id, name, batchName, batchId, courseDocId, courseName, weeklyTeachingHours, teacherId, startDate, endDate }) => ({ id, name, batchName, batchId, courseDocId, courseName, weeklyTeachingHours, teacherId, startDate, endDate }));
   data.courses = data.courses.map(({ id, name, courseName }) => ({ id, name, courseName }));
   data.enrollments = data.enrollments.map(({ status, studentDocId, batchDocId }) => ({ status, studentDocId, batchDocId }));
   data.fees = data.fees.map(({ studentDocId, batchDocId, amountPaid, remainingBalance }) => ({ studentDocId, batchDocId, amountPaid, remainingBalance }));
@@ -97,6 +134,62 @@ const queryText = (question, history = []) => {
   const prior = [...history].reverse().find((item) => item.role === 'user' && typeof item.content === 'string');
   return prior ? `${prior.content} ${current}` : current;
 };
+
+// Deterministic, dependency-free intent detection. Every Copilot figure is computed
+// from Firestore records, so resolving the intent locally removes an AI round-trip
+// (faster, cheaper) and keeps the assistant answering when a provider is unavailable.
+function classifyIntent(question) {
+  const text = String(question || '').toLowerCase();
+  if (/\b(delete|remove|modify|change|update|send|publish|cancel|reschedule|edit|create|add|record|mark|enroll|approve|reject)\b/.test(text)) return 'write_action';
+  if (/fee|payment|balance|collection|paid|due|pending/.test(text)) return 'fees';
+  if (/attendance|present|absent|late/.test(text)) return 'attendance';
+  if (/timetable|schedule|class|lecture|session|teach\w*\s*hours|hours|recurring|next week/.test(text)) {
+    if (/conflict|overlap|double.?book/.test(text)) return 'conflicts';
+    if (/workload|most classes/.test(text)) return 'trainer_workload';
+    if (/incomplete|missing|why|hours/.test(text)) return 'missing_hours';
+    return 'timetable';
+  }
+  if (/low|few|smaller|under.?enroll/.test(text)) return 'low_enrollment';
+  if (/course/.test(text) && !/student/.test(text)) return 'courses';
+  if (/attention|follow.?up/.test(text)) return 'attention';
+  if (/batch|enroll|student|count|how many|course/.test(text)) return 'counts';
+  return 'unsupported';
+}
+
+const DAY_CODES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const DAY_LABELS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const WEEKDAY_LOOKUP = {
+  sunday: 0, sun: 0, monday: 1, mon: 1, tuesday: 2, tue: 2, tues: 2,
+  wednesday: 3, wed: 3, thursday: 4, thu: 4, thur: 4, thurs: 4, friday: 5, fri: 5, saturday: 6, sat: 6,
+};
+const isoDate = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+// Sessions may be stored as current keys (Mon) or legacy codes (MON); compare on the same key.
+const dayKey = (value) => {
+  const text = String(value || '').slice(0, 3).toLowerCase();
+  return DAY_CODES.find((code) => code.toLowerCase() === text) || String(value || '');
+};
+// A batch only runs between its start and end dates (either bound may be unset).
+const batchRunsOn = (batch, iso) => (!batch.startDate || iso >= batch.startDate) && (!batch.endDate || iso <= batch.endDate);
+
+// EDUPILOT stores a recurring weekly timetable rather than dated calendar entries, so a
+// date question is answered by resolving the requested day to its weekday and then
+// bounding the sessions by each batch's start and end dates.
+function resolveRequestedDate(normalized, now = new Date()) {
+  const base = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12);
+  const shift = (days) => { const date = new Date(base); date.setDate(date.getDate() + days); return date; };
+  if (/\bday after tom+o+r+ow\b/.test(normalized)) return { date: shift(2), label: 'the day after tomorrow' };
+  // `tom+o+r+ow` also accepts the common "tommorow"/"tomorow" spellings.
+  if (/\btom+o+r+ow\b/.test(normalized)) return { date: shift(1), label: 'tomorrow' };
+  if (/\byesterday\b/.test(normalized)) return { date: shift(-1), label: 'yesterday' };
+  if (/\btoday\b|\btonight\b|\bright now\b/.test(normalized)) return { date: base, label: 'today' };
+  const match = normalized.match(/\b(sunday|monday|tuesday|wednesday|thursday|friday|saturday|sun|mon|tue|tues|wed|thu|thur|thurs|fri|sat)\b/);
+  if (!match) return null;
+  const target = WEEKDAY_LOOKUP[match[1]];
+  if (target === undefined) return null;
+  let delta = (target - base.getDay() + 7) % 7;
+  if (delta === 0 && /\bnext\b/.test(normalized)) delta = 7;
+  return { date: shift(delta), label: DAY_LABELS[target] };
+}
 
 function summarize(question, history, profile, data, truncated = [], intent = '') {
   const intentTerms = {
@@ -141,7 +234,7 @@ function summarize(question, history, profile, data, truncated = [], intent = ''
     lines.push('This is based on saved attendanceRecords only; it is not a session-completion or future-attendance estimate.');
     return { answer: lines.join('\n\n'), title, links: [{ label: 'Open Attendance', route: 'attendance' }], truncated };
   }
-  if (/timetable|schedule|class|trainer conflict|teaching hours|trainer workload|trainers have the most classes/.test(normalized)) {
+  if (/timetable|schedule|class|lecture|session|trainer conflict|teaching hours|trainer workload|trainers have the most classes/.test(normalized)) {
     if (!TIMETABLE_ROLES.has(profile.role)) return { answer: 'Timetable information is not available for your role.', title, links: [], truncated };
     const scoped = sessions.filter((session) => profile.role === 'STUDENT' ? session.status === 'PUBLISHED' : true);
     const hours = (session) => Math.max(0, Number(session.durationMinutes || (session.endMinutes - session.startMinutes)) || 0) / 60;
@@ -151,8 +244,32 @@ function summarize(question, history, profile, data, truncated = [], intent = ''
       return { batch, scheduled, required };
     });
     const missing = weekly.filter((item) => item.required > item.scheduled);
-    if (/tomorrow|today|next week/.test(normalized)) {
-      lines.push('EDUPILOT stores recurring weekly timetable sessions. The Copilot cannot confirm date-specific holidays, cancellations, or a particular calendar day yet; open Timetable to review the selected week.');
+    const requestedDate = resolveRequestedDate(normalized);
+    const wantsDayList = requestedDate && !/conflict|overlap|double.?book|workload|missing|incomplete/.test(normalized);
+    if (wantsDayList) {
+      const iso = isoDate(requestedDate.date);
+      const dayCode = DAY_CODES[requestedDate.date.getDay()];
+      const readable = requestedDate.date.toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' });
+      const activeIds = new Set(batches.filter((batch) => batchRunsOn(batch, iso)).map((batch) => batch.id));
+      // Sessions carry the batch document id; fall back to the batch's display name so the
+      // answer names the class instead of echoing an internal id.
+      const batchNames = new Map(batches.map((batch) => [batch.id, nameOfBatch(batch)]));
+      const forDay = scoped
+        .filter((session) => dayKey(session.day) === dayCode && activeIds.has(session.batchDocId))
+        .sort((a, b) => (Number(a.startMinutes) || 0) - (Number(b.startMinutes) || 0));
+      if (!forDay.length) {
+        lines.push(`No recurring timetable session is scheduled for ${readable} (${dayCode}) in your scope.`);
+        lines.push('EDUPILOT stores a recurring weekly timetable, so a session is listed for a date only when its weekday matches and its batch is active (between its start and end dates) on that day.');
+      } else {
+        lines.push(`${forDay.length} recurring session(s) are scheduled for ${readable} (${dayCode}) on the published weekly timetable:`);
+        forDay.slice(0, 15).forEach((session) => lines.push(`${session.startTime || clockText(session.startMinutes)}–${session.endTime || clockText(session.endMinutes)} · ${session.batchName || batchNames.get(session.batchDocId) || session.batchId || session.batchDocId || 'Class'} · ${session.roomName || session.roomId || 'Room not set'} · ${session.teacherName || 'Trainer to be assigned'}`));
+        if (forDay.length > 15) lines.push(`Showing 15 of ${forDay.length} sessions; add a batch name to narrow the answer.`);
+        lines.push('These repeat each week on that weekday and are limited to batches active on the date. Stored holidays or one-off cancellations are not available to the Copilot.');
+      }
+    } else if (/next week/.test(normalized)) {
+      lines.push('EDUPILOT stores a recurring weekly timetable, so next week repeats the same weekday pattern. Open Timetable to review the selected week.');
+      const counts = DAY_CODES.map((code, index) => ({ label: DAY_LABELS[index], count: scoped.filter((session) => dayKey(session.day) === code).length })).filter((item) => item.count);
+      lines.push(counts.length ? counts.map((item) => `${item.label}: ${item.count} session(s)`).join('; ') : 'No saved timetable sessions were found in your scope.');
     } else if (/conflict|overlap|double.?book/.test(normalized)) {
       const conflicts = [];
       for (let left = 0; left < scoped.length; left += 1) for (let right = left + 1; right < scoped.length; right += 1) {
@@ -213,4 +330,4 @@ function summarize(question, history, profile, data, truncated = [], intent = ''
   };
 }
 
-module.exports = { loadData, readAll, summarize };
+module.exports = { classifyIntent, loadData, readAll, summarize };

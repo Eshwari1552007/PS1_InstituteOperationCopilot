@@ -1,15 +1,16 @@
+import { vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import App from './App';
 
-jest.mock('./auth/authService', () => ({
+vi.mock('./auth/authService', () => ({
   observeAuth: (callback) => { callback(null); return () => {}; },
-  login: jest.fn(),
-  requestPasswordReset: jest.fn(),
-  logout: jest.fn(),
+  login: vi.fn(),
+  requestPasswordReset: vi.fn(),
+  logout: vi.fn(),
   PUBLIC_ROLES: ['STUDENT'],
-  completeProfile: jest.fn(),
+  completeProfile: vi.fn(),
 }));
-jest.mock('./firebase', () => ({ db: {} }));
+vi.mock('./firebase', () => ({ db: {} }));
 
 test('renders the login screen with accessible fields', () => {
   render(<App />);

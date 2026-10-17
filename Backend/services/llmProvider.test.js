@@ -49,8 +49,8 @@ test('uses OpenAI-compatible DeepSeek endpoint and JSON response format', async 
   assert.equal(result.text, '{"intent":"counts"}');
   assert.equal(result.provider, 'deepseek');
   assert.equal(request.url, 'https://api.deepseek.com/chat/completions');
-  assert.equal(request.body.response_format.type, 'json_object');
-  assert.deepEqual(request.body.thinking, { type: 'disabled' });
+  assert.equal(request.body.model, 'deepseek-flash');
+  assert.deepStrictEqual(request.body.response_format.type, 'json_object');
   assert.equal(request.options.headers.Authorization, 'Bearer test-key');
 });
 
@@ -109,4 +109,24 @@ test('falls through a rejected primary key and uses the next configured provider
   assert.equal(calls.length, 2);
   assert.match(calls[0], /generativelanguage/);
   assert.equal(calls[1], 'https://api.openai.com/v1/chat/completions');
+});
+
+test('retries a provider after a bounded model-error cooldown', async () => {
+  resetProviderCooldowns();
+  let calls = 0;
+  const options = {
+    env: { AI_PROVIDER: 'deepseek', DEEPSEEK_API_KEY: 'test-key' },
+    now: 10_000,
+    fetchImpl: async () => {
+      calls += 1;
+      return calls === 1
+        ? jsonResponse({ error: { message: 'model not found' } }, 404)
+        : jsonResponse({ choices: [{ message: { content: 'Recovered response' } }] });
+    },
+  };
+  await assert.rejects(requestText('question', 'system', options), /model or endpoint not found/);
+  await assert.rejects(requestText('question', 'system', options), /cooling down.*300 second/i);
+  const result = await requestText('question', 'system', { ...options, now: 310_001 });
+  assert.equal(result.text, 'Recovered response');
+  assert.equal(calls, 2);
 });

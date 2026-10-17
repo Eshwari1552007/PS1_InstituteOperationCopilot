@@ -4,9 +4,9 @@ import { auth } from '../firebase';
 import './copilot.css';
 
 const SUGGESTIONS = {
-  OWNER: ['How many students are enrolled?', 'Which batches have fewer students?', 'Show pending fees', 'Which batches have incomplete weekly teaching hours?', 'What needs my attention?'],
+  OWNER: ['How many students are enrolled?', 'Which batches have fewer students?', 'Show pending fees', 'Which batches have incomplete weekly teaching hours?', 'Which lectures are scheduled tomorrow?', 'What needs my attention?'],
   COUNSELOR: ['How many students are enrolled?', 'Which batches have fewer students?', 'Which students need follow-up?', 'What needs my attention?'],
-  TRAINER: ['Show my assigned batches', 'Which batches have incomplete weekly teaching hours?', 'Show my timetable', 'Summarize attendance'],
+  TRAINER: ['Show my assigned batches', 'Which lectures are scheduled tomorrow?', 'Which batches have incomplete weekly teaching hours?', 'Show my timetable', 'Summarize attendance'],
   ACCOUNTS: ['Show pending fees', 'Summarize recorded payments', 'What needs my attention?'],
   STUDENT: ['Show my timetable', 'Summarize my attendance', 'Show my pending fees', 'Show my enrollments'],
 };
@@ -43,7 +43,7 @@ export default function Copilot({ profile, onNavigate }) {
     try {
       const token = await auth.currentUser?.getIdToken();
       if (!token) throw new Error('Your sign-in expired. Sign in again and retry.');
-      const response = await fetch(`${process.env.REACT_APP_API_URL || ''}/api/copilot/chat`, {
+      const response = await fetch(`${import.meta.env.REACT_APP_API_URL || ''}/api/copilot/chat`, {
         method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ message: question, history }),
       });
@@ -65,6 +65,7 @@ export default function Copilot({ profile, onNavigate }) {
           {message.content && <p>{message.content}</p>}
           {message.answer && <div className="ep-copilot__answer">{message.answer.split('\n').map((line, lineIndex) => line ? <p key={lineIndex}>{line}</p> : <br key={lineIndex}/>)}</div>}
           {message.providerLabel && <span className="ep-copilot__provider">Generated with {message.providerLabel}</span>}
+          {message.aiNotice && <small className="ep-copilot__ai-notice">{message.aiNotice}</small>}
           {message.verifiedAnswer && message.verifiedAnswer !== message.answer && <details className="ep-copilot__verified"><summary>Verified figures and source</summary><div className="ep-copilot__answer">{message.verifiedAnswer.split('\n').map((line, lineIndex) => line ? <p key={lineIndex}>{line}</p> : <br key={lineIndex}/>)}</div></details>}
           {!!message.truncated?.length && <small>Some records exceeded the safe query limit. The figures may be incomplete; narrow the question or ask an administrator to review the dataset.</small>}
           {message.links?.length > 0 && <div className="ep-copilot__links">{message.links.map((link) => <button key={link.route} type="button" onClick={() => onNavigate(link.route)}>{link.label}<ArrowRight size={14}/></button>)}</div>}

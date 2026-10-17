@@ -1,6 +1,7 @@
+import { vi } from 'vitest';
 import { normalizeStudent } from './studentService';
 
-jest.mock('../firebase', () => ({ db: {} }));
+vi.mock('../firebase', () => ({ db: {} }));
 
 const validStudent = {
   studentId: '', fullName: '  Mira   Shah ', email: ' MIRA@EXAMPLE.COM ', phone: ' 1234567890 ',

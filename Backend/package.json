@@ -13,11 +13,11 @@
     "seed:test-data": "node scripts/seedTestData.js",
     "provision-owner": "node scripts/provisionOwner.js"
   },
-  "engines": { "node": ">=18" },
+  "engines": { "node": ">=22" },
   "dependencies": {
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
-    "firebase-admin": "^13.0.2"
+    "firebase-admin": "^14.5.0"
   }
 }

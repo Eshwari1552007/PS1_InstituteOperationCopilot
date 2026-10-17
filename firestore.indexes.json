@@ -59,6 +59,14 @@
       ]
     },
     {
+      "collectionGroup": "attendanceRecords",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "batchDocId", "order": "ASCENDING" },
+        { "fieldPath": "teacherId", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "timetableSessions",
       "queryScope": "COLLECTION",
       "fields": [
