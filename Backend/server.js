@@ -63,5 +63,11 @@ app.use((error, req, res, _next) => {
   return res.status(status).json({ code, message });
 });
 
+
+app.get("/", (req, res) => {
+  res.send("Backend is running successfully ");
+});
+
+
 const port = Number(process.env.PORT) || 5000;
 app.listen(port, '0.0.0.0', () => console.log(`EDUPILOT API listening on port ${port}`));
