@@ -13,8 +13,11 @@
     "seed:test-data": "node scripts/seedTestData.js",
     "provision-owner": "node scripts/provisionOwner.js"
   },
-  "engines": { "node": ">=22 <25" },
+  "engines": {
+    "node": ">=22 <25"
+  },
   "dependencies": {
+    "@google-cloud/firestore": "^9.1.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",

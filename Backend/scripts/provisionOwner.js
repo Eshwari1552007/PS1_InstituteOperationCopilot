@@ -1,19 +1,13 @@
 require('dotenv').config({ path: require('node:path').resolve(__dirname, '../.env') });
 const path = require('node:path');
-const admin = require('firebase-admin');
+const initializeFirebase = require('../config/firebase');
 
 async function run() {
   const projectId = process.env.FIREBASE_PROJECT_ID;
   const email = (process.env.OWNER_EMAIL || '').trim().toLowerCase();
   if (!projectId || !email) throw new Error('Set FIREBASE_PROJECT_ID and OWNER_EMAIL in Backend/.env.');
 
-  const keyPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
-  const credential = keyPath
-    ? admin.credential.cert(require(path.resolve(__dirname, '..', keyPath)))
-    : admin.credential.applicationDefault();
-  const app = admin.apps[0] || admin.initializeApp({ projectId, credential });
-  const auth = admin.auth(app);
-  const db = admin.firestore(app);
+  const { auth, db, FieldValue } = initializeFirebase();
 
   let user;
   try {
@@ -37,7 +31,7 @@ async function run() {
     return;
   }
 
-  const now = admin.firestore.FieldValue.serverTimestamp();
+  const now = FieldValue.serverTimestamp();
   await profileRef.set({
     uid: user.uid,
     name: user.displayName || process.env.OWNER_NAME || 'EDUPILOT Owner',

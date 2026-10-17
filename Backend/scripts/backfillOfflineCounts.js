@@ -2,7 +2,7 @@ require('dotenv').config();
 const initializeFirebase = require('../config/firebase');
 
 async function main() {
-  const { admin, db } = initializeFirebase();
+  const { app, db, FieldValue } = initializeFirebase();
   const [batchSnapshot, enrollmentSnapshot] = await Promise.all([
     db.collection('batches').get(),
     db.collection('enrollments').where('status', '==', 'ACTIVE').where('learningMode', '==', 'OFFLINE').get(),
@@ -17,13 +17,13 @@ async function main() {
   batchSnapshot.forEach((batch) => {
     writer.update(batch.ref, {
       offlineEnrolledCount: counts.get(batch.id) || 0,
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
     });
     updated += 1;
   });
   await writer.close();
   console.log(`Backfilled offline enrollment counts for ${updated} batches from ${enrollmentSnapshot.size} active offline enrollments.`);
-  await admin.app().delete();
+  await app.delete();
 }
 
 main().catch((error) => {

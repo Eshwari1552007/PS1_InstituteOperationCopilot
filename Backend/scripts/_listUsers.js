@@ -1,7 +1,6 @@
 require('dotenv').config({ path: require('node:path').resolve(__dirname, '../.env') });
 const initializeFirebase = require('../config/firebase');
-const { admin, db } = initializeFirebase();
-const auth = admin.auth();
+const { auth, db } = initializeFirebase();
 
 (async () => {
   const snapshot = await db.collection('users').get();

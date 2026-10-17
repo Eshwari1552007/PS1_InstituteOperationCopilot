@@ -19,14 +19,14 @@ function rateLimit(uid, now = Date.now()) {
   return current.count <= 30;
 }
 
-function createCopilotRoutes({ admin, db }) {
+function createCopilotRoutes({ auth, db }) {
   const router = express.Router();
   router.post('/chat', async (req, res, next) => {
     try {
       const match = /^Bearer\s+(.+)$/i.exec(req.get('authorization') || '');
       if (!match) throw fail(401, 'AUTH_REQUIRED', 'Sign in to use EDUPILOT Copilot.');
       let decoded;
-      try { decoded = await admin.auth().verifyIdToken(match[1]); }
+      try { decoded = await auth.verifyIdToken(match[1]); }
       catch { throw fail(401, 'AUTH_INVALID', 'Your sign-in expired. Sign in again and retry.'); }
       if (!rateLimit(decoded.uid)) throw fail(429, 'RATE_LIMITED', 'You have sent too many Copilot requests. Wait a minute and retry.');
       const profileSnap = await db.collection('users').doc(decoded.uid).get();

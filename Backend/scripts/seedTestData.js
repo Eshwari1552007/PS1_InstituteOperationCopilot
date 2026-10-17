@@ -22,8 +22,7 @@ require('dotenv').config({ path: require('node:path').resolve(__dirname, '../.en
 const crypto = require('node:crypto');
 const initializeFirebase = require('../config/firebase');
 
-const { admin, db } = initializeFirebase();
-const auth = admin.auth();
+const { auth, db, FieldValue } = initializeFirebase();
 
 const SEED_TAG = 'EDUPILOT_SEED_V1';
 const MANIFEST_COLLECTION = 'seedManifests';
@@ -577,7 +576,7 @@ async function run() {
   console.log(`Wrote ${written} documents.`);
 
   // ---- Sequences ----------------------------------------------------------
-  const now = admin.firestore.FieldValue.serverTimestamp();
+  const now = FieldValue.serverTimestamp();
   await Promise.all([
     db.collection('sequences').doc(`course-${YEAR}`).set({ lastNumber: courseCounter, updatedAt: now }),
     db.collection('sequences').doc(`batch-${YEAR}`).set({ lastNumber: batchCounter, updatedAt: now }),

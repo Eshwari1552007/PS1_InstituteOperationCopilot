@@ -10,7 +10,7 @@ const activeBatch = (batch) => batch && !batch.isClosed && !batch.isArchived
   && !['INACTIVE', 'CLOSED', 'COMPLETED'].includes(batch.status)
   && (batch.status !== 'FULL' || (batch.learningModes || ['OFFLINE']).includes('ONLINE'));
 
-function createEnrollmentRoutes({ admin, db }) {
+function createEnrollmentRoutes({ auth, db, FieldValue }) {
   const router = express.Router();
   const requestLimit = createFixedWindowRateLimiter({ limit: 60 });
   const availabilityLimit = createFixedWindowRateLimiter({ limit: 10 });
@@ -24,7 +24,7 @@ function createEnrollmentRoutes({ admin, db }) {
       const match = /^Bearer\s+(.+)$/i.exec(req.get('authorization') || '');
       if (!match) throw dataError(401, 'AUTH_REQUIRED', 'Sign in as an Owner or Accounts user to verify receipts.');
       let decoded;
-      try { decoded = await admin.auth().verifyIdToken(match[1], true); }
+      try { decoded = await auth.verifyIdToken(match[1], true); }
       catch { throw dataError(401, 'AUTH_INVALID', 'Your sign-in expired. Sign in again and retry.'); }
       const staffSnap = await db.collection(roleCollection).doc(decoded.uid).get();
       const staff = staffSnap.exists ? staffSnap.data() : null;
@@ -73,7 +73,7 @@ function createEnrollmentRoutes({ admin, db }) {
 
         const newPaid = paid + amount;
         const newBalance = total - newPaid;
-        const now = admin.firestore.FieldValue.serverTimestamp();
+        const now = FieldValue.serverTimestamp();
         transaction.update(paymentRef, {
           status: 'VERIFIED', method: 'MANUAL', isDemo: false, recordedBy: decoded.uid,
           verifiedBy: decoded.uid, verifiedAt: now, remainingBalance: money(newBalance),
@@ -98,7 +98,7 @@ function createEnrollmentRoutes({ admin, db }) {
     try {
       const match = /^Bearer\s+(.+)$/i.exec(req.get('authorization') || '');
       if (!match) throw dataError(401, 'AUTH_REQUIRED', 'Sign in to continue.');
-      const decoded = await admin.auth().verifyIdToken(match[1]);
+      const decoded = await auth.verifyIdToken(match[1]);
       const profileSnap = await db.collection(roleCollection).doc(decoded.uid).get();
       if (!profileSnap.exists || !approvedStudent(profileSnap.data())) throw dataError(403, 'STUDENT_REQUIRED', 'An approved Student account is required.');
       if (!requestLimit(decoded.uid)) throw dataError(429, 'RATE_LIMITED', 'Too many enrollment requests. Wait a minute and retry.');
@@ -188,7 +188,7 @@ function createEnrollmentRoutes({ admin, db }) {
           const offlineCapacity = Number(batch.offlineCapacity || batch.capacity || 0);
           if (offlineEnrolledCount >= offlineCapacity) throw dataError(409, 'OFFLINE_FULL', 'Offline seats are full. Please select Online mode if available.');
         }
-        const now = admin.firestore.FieldValue.serverTimestamp();
+        const now = FieldValue.serverTimestamp();
         const enrollment = {
           studentDocId: uid, studentId: studentSnap.data().studentId, studentName: studentSnap.data().fullName,
           studentEmail: studentSnap.data().email || '', studentPhone: studentSnap.data().phone || '',
@@ -261,7 +261,7 @@ function createEnrollmentRoutes({ admin, db }) {
         if (!validation.ok) throw dataError(validation.code === 'AMOUNT_TOO_HIGH' ? 400 : validation.code === 'FEE_RECORD_INVALID' ? 409 : 400, validation.code, validation.error);
         const { total, paid: alreadyPaid, balance, amount } = validation;
         if (balance <= 0) throw dataError(409, 'ALREADY_PAID', 'This course is already fully paid.');
-        const now = admin.firestore.FieldValue.serverTimestamp();
+        const now = FieldValue.serverTimestamp();
         transaction.create(paymentRef, {
           feeRecordId: enrollmentId, enrollmentId, studentDocId: uid, studentId: enrollment.studentId || feeData.studentId || '',
           batchDocId: enrollment.batchDocId || feeData.batchDocId || null, learningMode: feeData.learningMode || enrollment.learningMode || 'OFFLINE',

@@ -1,8 +1,13 @@
 const path = require('node:path');
-const admin = require('firebase-admin');
+const { applicationDefault, cert, getApps, initializeApp } = require('firebase-admin/app');
+const { getAuth } = require('firebase-admin/auth');
+const { FieldValue, getFirestore } = require('firebase-admin/firestore');
 
 function initializeFirebase() {
-  if (admin.apps.length) return { admin, db: admin.firestore(admin.app()) };
+  const existingApp = getApps()[0];
+  if (existingApp) {
+    return { app: existingApp, auth: getAuth(existingApp), db: getFirestore(existingApp), FieldValue };
+  }
 
   const projectId = process.env.FIREBASE_PROJECT_ID || 'edupilot-80fa2';
   const credentialPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
@@ -23,15 +28,15 @@ function initializeFirebase() {
       if (serviceAccount.project_id !== projectId) {
         throw new Error('FIREBASE_SERVICE_ACCOUNT_JSON project does not match FIREBASE_PROJECT_ID');
       }
-      options.credential = admin.credential.cert(serviceAccount);
+      options.credential = cert(serviceAccount);
     } else if (credentialPath) {
       const resolved = path.resolve(__dirname, '..', credentialPath);
-      options.credential = admin.credential.cert(require(resolved));
+      options.credential = cert(require(resolved));
     } else {
-      options.credential = admin.credential.applicationDefault();
+      options.credential = applicationDefault();
     }
-    const app = admin.initializeApp(options);
-    return { admin, db: admin.firestore(app) };
+    const app = initializeApp(options);
+    return { app, auth: getAuth(app), db: getFirestore(app), FieldValue };
   } catch (error) {
     error.message = `Firebase Admin initialization failed: ${error.message}. Configure FIREBASE_SERVICE_ACCOUNT_JSON, Application Default Credentials, or GOOGLE_APPLICATION_CREDENTIALS with a valid private service-account JSON.`;
     throw error;
