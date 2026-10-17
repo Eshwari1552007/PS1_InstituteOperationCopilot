@@ -8,7 +8,9 @@
     "start": "node server.js",
     "dev": "node --watch server.js",
     "test": "node --test",
+    "audit:attendance": "node scripts/auditAttendance.js --dry-run",
     "backfill:offline-counts": "node scripts/backfillOfflineCounts.js",
+    "seed:test-data": "node scripts/seedTestData.js",
     "provision-owner": "node scripts/provisionOwner.js"
   },
   "engines": { "node": ">=18" },

@@ -1,10 +1,13 @@
-require('dotenv').config();
+const path = require('node:path');
+// Anchor dotenv to this Backend directory so starting `node Backend/server.js`
+// from the repository root still loads Backend/.env.
+require('dotenv').config({ path: path.join(__dirname, '.env') });
 const express = require('express');
 const cors = require('cors');
 const initializeFirebase = require('./config/firebase');
 const createTestRoutes = require('./routes/testRoutes');
 const createEnrollmentRoutes = require('./routes/enrollmentRoutes');
-const createAttendanceRoutes = require('./routes/attendanceRoutes');
+const createCopilotRoutes = require('./routes/copilotRoutes');
 
 const app = express();
 const allowedOrigins = (process.env.FRONTEND_URL || 'http://localhost:3000').split(',').map((origin) => origin.trim());
@@ -38,7 +41,7 @@ if (process.env.NODE_ENV !== 'production' && process.env.ENABLE_FIRESTORE_TEST_E
   app.use('/api/firestore-test', createTestRoutes(firebase.db));
 }
 app.use('/api/enrollment', createEnrollmentRoutes(firebase));
-app.use('/api/attendance', createAttendanceRoutes(firebase));
+app.use('/api/copilot', createCopilotRoutes(firebase));
 app.use((error, _req, res, _next) => {
   return res.status(error.status || 400).json({ code: error.code || 'REQUEST_FAILED', message: error.message || 'Invalid request.' });
 });

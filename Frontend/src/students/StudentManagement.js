@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertCircle, ChevronLeft, ChevronRight, Eye, Pencil, Plus, RefreshCw, Search, Trash2, Users, X } from 'lucide-react';
 import { listStudents, removeStudent, saveStudent } from './studentService';
 import { getEnrollmentOptions } from '../batches/academyService';
+import { useToast } from '../components/Toast';
 import './students.css';
 
 const PAGE_SIZE = 10;
@@ -81,19 +82,20 @@ function StudentForm({ initial, mode, busy, error, onClose, onSubmit, options })
   </div>;
 }
 
-function StudentRow({ student, canDelete, onView, onEdit, onDelete }) {
+function StudentRow({ student, canDelete, showFees, onView, onEdit, onDelete }) {
   const name = student.fullName || 'Unnamed student';
   return <tr>
     <td><span className="sm-id">{student.studentId || '—'}</span></td>
     <td><div className="sm-person"><span className="sm-avatar">{name.trim().charAt(0).toUpperCase()}</span><div><strong>{name}</strong>{student.source === 'account-profile' && <small className="sm-account-label">Account profile only</small>}</div></div></td>
     <td>{student.email || '—'}</td><td>{student.phone || '—'}</td><td>{student.enrollments?.length ? student.enrollments.map((item) => item.courseName).join(', ') : student.course || '—'}</td><td>{student.enrollments?.length ? student.enrollments.map((item) => `${item.batchName} · ${item.learningMode}`).join('; ') : student.enrollmentStatus === 'NONE' ? 'Not Enrolled' : student.batch || '—'}</td><td>{displayDate(student.admissionDate)}</td>
     <td><span className={`sm-status sm-status--${String(student.accountStatus || student.status || 'INACTIVE').toLowerCase()}`}>{student.accountStatus || student.status || 'INACTIVE'}</span><small className="sm-account-label">{student.enrollmentStatus === 'NONE' || (!student.enrollments?.length && !student.batch) ? 'Not Enrolled' : student.enrollments?.length ? `${student.enrollments.length} active enrollment(s)` : student.enrollmentStatus || 'Enrolled'}</small></td>
-    <td><small>{student.paymentStatus || 'UNPAID'} · Total {new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(Number(student.totalFees || 0))} · Paid {new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(Number(student.amountPaid || 0))} · Due {new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(Number(student.remainingBalance || 0))}</small></td>
+    {showFees && <td><small>{student.paymentStatus || 'UNPAID'} · Total {new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(Number(student.totalFees || 0))} · Paid {new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(Number(student.amountPaid || 0))} · Due {new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(Number(student.remainingBalance || 0))}</small></td>}
     <td><div className="sm-row-actions"><button type="button" aria-label={`View ${name}`} title="View" onClick={onView}><Eye size={16} /></button>{student.source !== 'account-profile' && <button type="button" aria-label={`Edit ${name}`} title="Edit" onClick={onEdit}><Pencil size={16} /></button>}{canDelete && student.source !== 'account-profile' && <button type="button" aria-label={`Archive ${name}`} title="Archive" onClick={onDelete}><Trash2 size={16} /></button>}</div></td>
   </tr>;
 }
 
 export default function StudentManagement({ profile }) {
+  const toast = useToast();
   const [students, setStudents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
@@ -116,10 +118,11 @@ export default function StudentManagement({ profile }) {
       const result = await listStudents(profile.role);
       setStudents(result.records);
       setSourceWarning(result.warnings.join(' '));
+      if (result.warnings.length) toast.warning(result.warnings.join(' '), 'Some records were skipped');
     }
-    catch (error) { setLoadError(errorMessage(error)); }
+    catch (error) { const text = errorMessage(error); setLoadError(text); toast.error(text, 'Could not load students'); }
     finally { setLoading(false); }
-  }, [profile.role]);
+  }, [profile.role, toast]);
   useEffect(() => { refresh(); }, [refresh]);
 
   const courses = useMemo(() => [...new Set(students.map((item) => item.course).filter(Boolean))].sort(), [students]);
@@ -140,8 +143,9 @@ export default function StudentManagement({ profile }) {
     setBusy(true); setMutationError(''); setNotice('');
     try {
       await saveStudent(values, profile.uid, dialog.mode === 'edit' ? dialog.student.documentId : '');
-      setDialog(null); setNotice(dialog.mode === 'edit' ? 'Student record updated.' : 'Student added successfully.'); await refresh();
-    } catch (error) { setMutationError(errorMessage(error)); throw error; }
+      const text = dialog.mode === 'edit' ? 'Student record updated.' : 'Student added successfully.';
+      setDialog(null); setNotice(text); toast.success(text, 'Student directory'); await refresh();
+    } catch (error) { const text = errorMessage(error); setMutationError(text); toast.error(text, 'Could not save student'); throw error; }
     finally { setBusy(false); }
   };
   const openForm = async (mode, student) => {
@@ -170,14 +174,15 @@ export default function StudentManagement({ profile }) {
       setDialog({ mode, student });
     } catch (failure) {
       setFormOptions({ courses: [], batches: [] });
-      setMutationError(`Could not load active courses and batches: ${errorMessage(failure)}`);
+      const text = `Could not load active courses and batches: ${errorMessage(failure)}`;
+      setMutationError(text); toast.error(text, 'Course and batch options');
       setDialog({ mode, student });
     }
   };
   const remove = async (student) => {
     setMutationError(''); setNotice(''); setBusy(true);
-    try { await removeStudent(student.documentId, profile.uid); setDialog(null); setNotice('Student archived.'); await refresh(); }
-    catch (error) { setMutationError(errorMessage(error)); setDialog(null); }
+    try { await removeStudent(student.documentId, profile.uid); setDialog(null); setNotice('Student archived.'); toast.success(`${student.fullName || 'Student'} archived.`, 'Student directory'); await refresh(); }
+    catch (error) { const text = errorMessage(error); setMutationError(text); toast.error(text, 'Could not archive student'); setDialog(null); }
     finally { setBusy(false); }
   };
 
@@ -199,7 +204,7 @@ export default function StudentManagement({ profile }) {
         : loading ? <div className="sm-state" role="status"><span className="sm-spinner" /> Loading students…</div>
           : students.length === 0 ? <div className="sm-state"><Users size={24} /><strong>No students yet</strong><p>Add your first student to populate the directory.</p></div>
             : visible.length === 0 ? <div className="sm-state"><Search size={24} /><strong>No matching students</strong><p>Try another search or reset the filters.</p><button className="sm-button sm-button--quiet" type="button" onClick={resetFilters}>Reset filters</button></div>
-              : <><div className="sm-table-wrap"><table className="sm-table"><thead><tr><th>Student ID</th><th>Student</th><th>Email</th><th>Phone</th><th>Course</th><th>Batch &amp; mode</th><th>Registration date</th><th>Account / enrollment status</th><th>Fee summary</th><th>Actions</th></tr></thead><tbody>{rows.map((student) => <StudentRow key={student.documentId} student={student} canDelete={canDelete} onView={() => openForm('view', student)} onEdit={() => openForm('edit', student)} onDelete={() => setDialog({ mode: 'delete', student })} />)}</tbody></table></div>
+              : <><div className="sm-table-wrap"><table className="sm-table"><thead><tr><th>Student ID</th><th>Student</th><th>Email</th><th>Phone</th><th>Course</th><th>Batch &amp; mode</th><th>Registration date</th><th>Account / enrollment status</th>{profile.role !== 'COUNSELOR' && <th>Fee summary</th>}<th>Actions</th></tr></thead><tbody>{rows.map((student) => <StudentRow key={student.documentId} student={student} canDelete={canDelete} showFees={profile.role !== 'COUNSELOR'} onView={() => openForm('view', student)} onEdit={() => openForm('edit', student)} onDelete={() => setDialog({ mode: 'delete', student })} />)}</tbody></table></div>
                 <footer className="sm-pagination"><span>Showing {Math.min((page - 1) * PAGE_SIZE + 1, visible.length)}–{Math.min(page * PAGE_SIZE, visible.length)} of {visible.length}</span><div><button type="button" aria-label="Previous page" disabled={page <= 1} onClick={() => setPage((value) => value - 1)}><ChevronLeft size={17} /></button><span>Page {page} of {pageCount}</span><button type="button" aria-label="Next page" disabled={page >= pageCount} onClick={() => setPage((value) => value + 1)}><ChevronRight size={17} /></button></div></footer></>}
     </section>
     {dialog && ['create', 'edit', 'view'].includes(dialog.mode) && <StudentForm initial={dialog.student} mode={dialog.mode} busy={busy} error={mutationError} options={formOptions} onClose={() => !busy && setDialog(null)} onSubmit={save} />}

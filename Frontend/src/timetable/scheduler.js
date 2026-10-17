@@ -12,12 +12,14 @@ export const DEFAULT_SETTINGS = {
   workingDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'],
   openTime: '09:00',
   closeTime: '18:00',
-  timeZone: 'Asia/Kolkata',
   slotIncrement: 30,
   breaks: [{ id: 'break-1', name: 'Lunch', enabled: true, startTime: '13:00', endTime: '14:00' }],
   rooms: [],
-  holidays: [],
 };
+
+export const ONLINE_ROOM = { id: 'ONLINE', name: 'Online', type: 'Virtual', capacity: 100000 };
+
+const LEGACY_DAY_TO_KEY = { MON: 'Mon', TUE: 'Tue', WED: 'Wed', THU: 'Thu', FRI: 'Fri', SAT: 'Sat', SUN: 'Sun' };
 
 export const toMinutes = (value) => {
   const match = /^(\d{2}):(\d{2})$/.exec(String(value || ''));
@@ -27,6 +29,9 @@ export const toMinutes = (value) => {
 };
 export const toTime = (minutes) => `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
 export const overlaps = (aStart, aEnd, bStart, bEnd) => aStart < bEnd && bStart < aEnd;
+export const dayIndex = (key) => DAYS.findIndex((day) => day.key === (LEGACY_DAY_TO_KEY[key] || key));
+export const normalizeDay = (day) => LEGACY_DAY_TO_KEY[day] || day;
+
 export const weeklyHours = (batch) => Number.isInteger(Number(batch?.weeklyTeachingHours)) && Number(batch.weeklyTeachingHours) > 0
   ? Number(batch.weeklyTeachingHours)
   : null;
@@ -55,81 +60,77 @@ export const preferredDays = (batch) => {
   return (batch.daysOfWeek || []).map((day) => byLegacy.get(day) || day).filter((day) => DAYS.some((item) => item.key === day));
 };
 
-export function getParticipantModes(batch = {}) {
+/* --------------------------------------------------------------------------
+   Resource helpers
+   -------------------------------------------------------------------------- */
+
+const isRoomActive = (room) => Boolean(room) && room.active !== false && room.status !== 'INACTIVE';
+export const activeRooms = (settings) => (settings?.rooms || []).filter(isRoomActive);
+const enabledBreaks = (settings) => (settings?.breaks || []).filter((entry) => entry.enabled);
+
+/** Every room the scheduler may consider for a batch: offline rooms that fit the
+ *  batch capacity/type, plus a virtual online room when the batch supports online. */
+export function roomPoolFor(settings, batch) {
   const modes = batch.learningModes || ['OFFLINE'];
-  const enrolled = Number(batch.enrolledCount || 0);
-  const offline = Number(batch.offlineEnrolledCount ?? (modes.includes('OFFLINE') ? enrolled : 0));
-  const online = Math.max(0, enrolled - offline);
-  if (offline > 0 && online > 0) return modes.includes('OFFLINE') && modes.includes('ONLINE') ? 'HYBRID' : 'INVALID_HYBRID';
-  if (online > 0) return modes.includes('ONLINE') ? 'ONLINE' : 'INVALID_HYBRID';
-  if (offline > 0) return modes.includes('OFFLINE') ? 'OFFLINE' : 'INVALID_HYBRID';
-  if (modes.length === 1) return modes[0];
-  return 'UNSPECIFIED';
+  const pool = [];
+  if (modes.includes('OFFLINE')) {
+    pool.push(...activeRooms(settings).filter((room) => Number(room.capacity || 0) >= Number(batch.capacity || 0) && (!batch.roomType || room.type === batch.roomType)));
+  }
+  if (modes.includes('ONLINE')) pool.push(ONLINE_ROOM);
+  return pool;
 }
 
-export const roomCapacityRequired = (batch = {}) => getParticipantModes(batch) === 'HYBRID'
-  ? Number(batch.offlineEnrolledCount || 0)
-  : Number(batch.capacity || 0);
-
-export const isRoomActive = (room) => room && room.isArchived !== true && room.isActive !== false
-  && !['INACTIVE', 'CLOSED', 'ARCHIVED'].includes(String(room.status || '').toUpperCase());
-
-export const getEligibleRooms = (settings) => (settings.rooms || []).filter(isRoomActive);
-
-const normalizedDay = (day) => ({ MON: 'Mon', TUE: 'Tue', WED: 'Wed', THU: 'Thu', FRI: 'Fri', SAT: 'Sat', SUN: 'Sun' }[String(day || '').slice(0, 3).toUpperCase()] || day);
-const availabilityForDay = (availability, day) => {
-  if (!availability) return null;
-  if (Array.isArray(availability)) return { days: availability };
-  const key = normalizedDay(day);
-  const dayWindows = availability[key] ?? availability[String(key).toUpperCase()] ?? availability[{ Mon: 'MON', Tue: 'TUE', Wed: 'WED', Thu: 'THU', Fri: 'FRI', Sat: 'SAT', Sun: 'SUN' }[key]];
-  return { ...availability, ...(dayWindows ? (Array.isArray(dayWindows) ? { windows: dayWindows } : dayWindows) : {}) };
-};
-
-function fitsAvailability(availability, day, start, end) {
-  if (!availability) return true;
-  const item = availabilityForDay(availability, day) || {};
-  const days = item.days || item.availableDays || item.workingDays || item.weekdays;
-  if (Array.isArray(days) && !days.map(normalizedDay).includes(day)) return false;
-  if (item.unavailableDays?.map(normalizedDay).includes(day)) return false;
-  const availableStart = item.startTime || item.availableStartTime;
-  const availableEnd = item.endTime || item.availableEndTime;
-  if (availableStart && start < toMinutes(availableStart)) return false;
-  if (availableEnd && end > toMinutes(availableEnd)) return false;
-  if (item.isActive === false || item.isArchived === true || ['INACTIVE', 'CLOSED', 'ARCHIVED'].includes(String(item.status || '').toUpperCase())) return false;
-  if (Array.isArray(item.windows) && !item.windows.some((window) => start >= toMinutes(window.startTime || window.start) && end <= toMinutes(window.endTime || window.end))) return false;
-  return true;
+/** All aligned start times on the operating window that fit `duration` and avoid configured breaks. */
+export function candidateStarts(settings, duration) {
+  const open = toMinutes(settings.openTime); const close = toMinutes(settings.closeTime);
+  const increment = Number(settings.slotIncrement) || 30;
+  const breaks = enabledBreaks(settings);
+  const starts = [];
+  if (!Number.isFinite(open) || !Number.isFinite(close) || close <= open || duration <= 0) return starts;
+  for (let start = open; start + duration <= close; start += increment) {
+    const end = start + duration;
+    if (breaks.some((entry) => overlaps(start, end, toMinutes(entry.startTime), toMinutes(entry.endTime)))) continue;
+    starts.push(start);
+  }
+  return starts;
 }
+
+export function filterEligibleBatches(batches) {
+  const date = new Date();
+  const today = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  return (batches || []).filter((batch) => !batch.isArchived && !batch.isClosed && !batch.courseArchived
+    && !['INACTIVE', 'CLOSED', 'COMPLETED', 'CANCELLED'].includes(batch.status)
+    && !['INACTIVE', 'CLOSED', 'COMPLETED', 'CANCELLED'].includes(batch.courseStatus)
+    && (!batch.endDate || batch.endDate >= today));
+}
+
+/* --------------------------------------------------------------------------
+   Settings + manual editing validation
+   -------------------------------------------------------------------------- */
 
 export function validateSettings(settings) {
   const errors = [];
   const open = toMinutes(settings.openTime); const close = toMinutes(settings.closeTime);
   if (!Number.isFinite(open) || !Number.isFinite(close) || close <= open) errors.push('Institute closing time must be later than opening time.');
   if (![15, 30, 60].includes(Number(settings.slotIncrement))) errors.push('Choose a 15, 30, or 60 minute slot increment.');
-  try { new Intl.DateTimeFormat('en-US', { timeZone: settings.timeZone || 'Asia/Kolkata' }); }
-  catch { errors.push('Enter a valid IANA institute time zone, such as Asia/Kolkata.'); }
   if (!settings.workingDays?.length) errors.push('Select at least one working day.');
   const roomNames = (settings.rooms || []).map((room) => String(room.name || '').trim().toLowerCase());
   if (roomNames.some((name) => !name)) errors.push('Every room must have a name.');
   if (new Set(roomNames).size !== roomNames.length) errors.push('Room names must be unique.');
   if ((settings.rooms || []).some((room) => !Number.isFinite(Number(room.capacity)) || Number(room.capacity) < 1)) errors.push('Every room needs a positive capacity.');
-  for (const room of getEligibleRooms(settings)) {
-    if (room.availableStartTime && !Number.isFinite(toMinutes(room.availableStartTime))) errors.push(`${room.name} has an invalid available start time.`);
-    if (room.availableEndTime && !Number.isFinite(toMinutes(room.availableEndTime))) errors.push(`${room.name} has an invalid available end time.`);
-  }
-  if ((settings.holidays || []).some((date) => !/^\d{4}-\d{2}-\d{2}$/.test(date))) errors.push('Holiday dates must use YYYY-MM-DD format.');
-  for (const item of (settings.breaks || []).filter((entry) => entry.enabled)) {
+  for (const item of enabledBreaks(settings)) {
     const start = toMinutes(item.startTime); const end = toMinutes(item.endTime);
     if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) errors.push(`${item.name || 'Break'} must have a valid start and end time.`);
     else if (start < open || end > close) errors.push(`${item.name || 'Break'} must be within institute working hours.`);
   }
-  const activeBreaks = (settings.breaks || []).filter((entry) => entry.enabled).map((entry) => ({ start: toMinutes(entry.startTime), end: toMinutes(entry.endTime), name: entry.name || 'Break' }));
-  for (let i = 0; i < activeBreaks.length; i += 1) for (let j = i + 1; j < activeBreaks.length; j += 1) {
-    if (overlaps(activeBreaks[i].start, activeBreaks[i].end, activeBreaks[j].start, activeBreaks[j].end)) errors.push(`${activeBreaks[i].name} overlaps ${activeBreaks[j].name}.`);
+  const activeBreakWindows = enabledBreaks(settings).map((entry) => ({ start: toMinutes(entry.startTime), end: toMinutes(entry.endTime), name: entry.name || 'Break' }));
+  for (let i = 0; i < activeBreakWindows.length; i += 1) for (let j = i + 1; j < activeBreakWindows.length; j += 1) {
+    if (overlaps(activeBreakWindows[i].start, activeBreakWindows[i].end, activeBreakWindows[j].start, activeBreakWindows[j].end)) errors.push(`${activeBreakWindows[i].name} overlaps ${activeBreakWindows[j].name}.`);
   }
   return [...new Set(errors)];
 }
 
-export function sessionConflicts(draft, sessions, batches, settings, editingId = '', trainers = []) {
+export function sessionConflicts(draft, sessions, batches, settings, editingId = '') {
   const errors = [];
   const batch = batches.find((item) => item.documentId === draft.batchDocId);
   if (!batch) return ['The batch no longer exists. Refresh timetable data.'];
@@ -137,27 +138,17 @@ export function sessionConflicts(draft, sessions, batches, settings, editingId =
   if (!duration) errors.push('Set this batch’s weekly teaching hours in Batch Management before scheduling it.');
   if (weeklyHours(batch) !== null && ![60, 120].includes(duration)) errors.push('Weekly-hours sessions must be one or two whole hours long.');
   if (draft.endMinutes - draft.startMinutes !== duration) errors.push('End time must match the allocated session duration for this batch.');
-  const allowedDays = (batch.availableDays || batch.permittedDays || settings.workingDays).map(normalizedDay);
-  if (!settings.workingDays.map(normalizedDay).includes(draft.day) || !allowedDays.includes(draft.day)) errors.push(`${draft.day} is not an institute or batch working day.`);
+  if (!settings.workingDays.includes(draft.day)) errors.push(`${draft.day} is not an institute working day.`);
   if ((draft.startMinutes - toMinutes(settings.openTime)) % Number(settings.slotIncrement)) errors.push(`Choose a start time aligned to the ${settings.slotIncrement}-minute slot increment.`);
   if (draft.startMinutes < toMinutes(settings.openTime) || draft.endMinutes > toMinutes(settings.closeTime)) errors.push('The session must fit within institute opening hours.');
-  const teacher = trainers.find((item) => item.uid === (draft.teacherId || batch.teacherId));
-  const teacherAvailability = batch.trainerAvailability || teacher?.availability || teacher?.teachingAvailability;
-  if (!fitsAvailability(teacherAvailability, draft.day, draft.startMinutes, draft.endMinutes)) errors.push('The assigned trainer is unavailable at this time.');
-  for (const item of (settings.breaks || []).filter((entry) => entry.enabled)) {
+  for (const item of enabledBreaks(settings)) {
     if (overlaps(draft.startMinutes, draft.endMinutes, toMinutes(item.startTime), toMinutes(item.endTime))) errors.push(`The session overlaps ${item.name || 'a break'}.`);
   }
-  const modes = batch.learningModes || ['OFFLINE'];
-  if (draft.deliveryMode === 'HYBRID' && (!modes.includes('ONLINE') || !modes.includes('OFFLINE'))) errors.push('Hybrid delivery requires both online and offline modes on the batch.');
-  if (draft.deliveryMode === 'HYBRID' && !String(draft.onlineClassDetails || batch.onlineClassDetails || '').trim()) errors.push('Add online classroom details to this mixed-mode batch before scheduling.');
-  if (draft.roomId === 'ONLINE' && !modes.includes('ONLINE')) errors.push('This batch is not configured for online learning.');
-  if (draft.roomId !== 'ONLINE' && !modes.includes('OFFLINE')) errors.push('This batch is not configured for in-person learning.');
-  const room = (settings.rooms || []).find((item) => item.id === draft.roomId && isRoomActive(item));
+  const room = (settings.rooms || []).find((item) => item.id === draft.roomId);
   if (draft.roomId !== 'ONLINE') {
     if (!room) errors.push('Choose an available room.');
-    else if (Number(room.capacity) < roomCapacityRequired(batch)) errors.push(`${room.name} capacity is below this batch’s in-person seat requirement (${roomCapacityRequired(batch)}).`);
+    else if (Number(room.capacity) < Number(batch.capacity || 0)) errors.push(`${room.name} capacity is below this batch’s maximum capacity (${batch.capacity}).`);
     else if (batch.roomType && room.type !== batch.roomType) errors.push(`${batch.name} requires a ${batch.roomType} room.`);
-    else if (!fitsAvailability(room.availability || room, draft.day, draft.startMinutes, draft.endMinutes)) errors.push(`${room.name} is unavailable at this time.`);
   }
   for (const other of sessions.filter((item) => item.id !== editingId && item.day === draft.day && overlaps(draft.startMinutes, draft.endMinutes, item.startMinutes, item.endMinutes))) {
     if (draft.roomId !== 'ONLINE' && other.roomId === draft.roomId) errors.push(`Room ${room?.name || ''} is booked during this time.`);
@@ -167,184 +158,237 @@ export function sessionConflicts(draft, sessions, batches, settings, editingId =
   return [...new Set(errors)];
 }
 
-export function generateSchedule(settings, batches, existingSessions = [], trainers = [], options = {}) {
-  const localToday = (() => { const date = new Date(); return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`; })();
-  const eligibleBatches = batches.filter((batch) => !batch.isArchived && !batch.isClosed && !batch.courseArchived
-    && !['INACTIVE', 'CLOSED', 'COMPLETED', 'CANCELLED'].includes(batch.status)
-    && !['INACTIVE', 'CLOSED', 'COMPLETED', 'CANCELLED'].includes(batch.courseStatus)
-    && (!batch.endDate || batch.endDate >= localToday));
-  const errors = validateSettings(settings);
-  if (errors.length) {
-    const unscheduled = eligibleBatches.map((batch) => ({ batchDocId: batch.documentId, name: batch.name, reason: errors.join(' ') }));
-    return { sessions: [], unscheduled, eligibleCount: eligibleBatches.length, courseCount: new Set(eligibleBatches.map((batch) => batch.courseDocId).filter(Boolean)).size,
-      report: eligibleBatches.map((batch) => ({ batchDocId: batch.documentId, batchName: batch.name, courseName: batch.courseName || batch.course || '', requiredHours: weeklyHours(batch) || 0, scheduledHours: 0, missingHours: weeklyHours(batch) || 0, lectureCount: 0, status: 'UNSCHEDULED', reason: errors.join(' ') })) };
+/* --------------------------------------------------------------------------
+   Post-generation validation
+   -------------------------------------------------------------------------- */
+
+export function validateSchedule(sessions, batches, settings) {
+  const issues = [];
+  const batchById = new Map((batches || []).map((batch) => [batch.documentId, batch]));
+  const roomById = new Map(activeRooms(settings).map((room) => [room.id, room]));
+  const breaks = enabledBreaks(settings);
+  const open = toMinutes(settings.openTime); const close = toMinutes(settings.closeTime);
+  const seen = new Set();
+  for (const session of sessions) {
+    const batch = batchById.get(session.batchDocId);
+    const label = `${batch?.name || session.batchName || session.batchDocId} (${session.day} ${toTime(session.startMinutes)})`;
+    const duration = Number(session.durationMinutes || (session.endMinutes - session.startMinutes));
+    if (!batch) issues.push(`${label}: references a batch that is not available for scheduling.`);
+    if (!session.teacherId) issues.push(`${label}: has no assigned trainer.`);
+    if (!settings.workingDays.includes(session.day)) issues.push(`${label}: falls on a day that is not an institute working day.`);
+    if (!(session.startMinutes >= open && session.endMinutes <= close)) issues.push(`${label}: is outside institute opening hours.`);
+    if (duration <= 0 || session.endMinutes - session.startMinutes !== duration) issues.push(`${label}: has an invalid duration.`);
+    for (const item of breaks) if (overlaps(session.startMinutes, session.endMinutes, toMinutes(item.startTime), toMinutes(item.endTime))) issues.push(`${label}: overlaps ${item.name || 'a configured break'}.`);
+    if (session.roomId !== 'ONLINE') {
+      const room = roomById.get(session.roomId);
+      if (!room) issues.push(`${label}: references a room that is not currently available.`);
+      else if (Number(room.capacity || 0) < Number(batch?.capacity || 0)) issues.push(`${label}: room ${room.name} capacity is below the batch capacity.`);
+    }
+    if (seen.has(session.id)) issues.push(`${label}: duplicate session id ${session.id}.`);
+    seen.add(session.id);
   }
-  const protectedSessions = existingSessions.filter((session) => session.status === 'PUBLISHED' || session.source === 'MANUAL');
-  const sessions = protectedSessions.map((session) => ({ ...session }));
-  const unscheduled = [];
-  const settingsBreaks = (settings.breaks || []).filter((entry) => entry.enabled);
-  const jobs = [];
-  const batchesSorted = [...eligibleBatches].sort((a, b) => {
-    const roomCount = (batch) => {
-      const modes = batch.learningModes || ['OFFLINE'];
-      const physical = modes.includes('OFFLINE') ? getEligibleRooms(settings).filter((room) => Number(room.capacity) >= roomCapacityRequired(batch) && (!batch.roomType || room.type === batch.roomType)).length : 0;
-      return physical + (modes.includes('ONLINE') ? 1 : 0);
+  for (let i = 0; i < sessions.length; i += 1) for (let j = i + 1; j < sessions.length; j += 1) {
+    const a = sessions[i]; const b = sessions[j];
+    if (a.day !== b.day || !overlaps(a.startMinutes, a.endMinutes, b.startMinutes, b.endMinutes)) continue;
+    if (a.roomId !== 'ONLINE' && a.roomId === b.roomId) issues.push(`Room double-booked: ${roomById.get(a.roomId)?.name || a.roomId} on ${a.day} ${toTime(a.startMinutes)} (${a.batchName} / ${b.batchName}).`);
+    if (a.teacherId && a.teacherId === b.teacherId) issues.push(`Trainer double-booked: ${a.teacherName || a.teacherId} on ${a.day} ${toTime(a.startMinutes)} (${a.batchName} / ${b.batchName}).`);
+    if (a.batchDocId === b.batchDocId) issues.push(`Batch double-booked: ${a.batchName} on ${a.day} ${toTime(a.startMinutes)}.`);
+  }
+  return [...new Set(issues)];
+}
+
+export function computeRoomUtilization(settings, sessions) {
+  const open = toMinutes(settings.openTime); const close = toMinutes(settings.closeTime);
+  const workingDays = (settings.workingDays || []).filter((day) => DAYS.some((item) => item.key === day));
+  const dailyMinutes = Number.isFinite(open) && Number.isFinite(close) && close > open ? close - open : 0;
+  const breakMinutes = enabledBreaks(settings).reduce((sum, entry) => {
+    const start = toMinutes(entry.startTime); const end = toMinutes(entry.endTime);
+    return sum + (Number.isFinite(start) && Number.isFinite(end) && end > start ? Math.min(end, close) - Math.max(start, open) : 0);
+  }, 0);
+  const availablePerRoom = workingDays.length * Math.max(0, dailyMinutes - breakMinutes);
+  const summarise = (roomId, name, type, list) => {
+    const occupied = list.reduce((sum, session) => sum + Number(session.durationMinutes || session.endMinutes - session.startMinutes), 0);
+    return {
+      roomId, name, type, sessions: list.length,
+      occupiedHours: Math.round((occupied / 60) * 10) / 10,
+      availableHours: Math.round((availablePerRoom / 60) * 10) / 10,
+      utilization: availablePerRoom ? Math.round((occupied / availablePerRoom) * 100) : 0,
     };
-    return roomCount(a) - roomCount(b) || (preferredDays(a).length || settings.workingDays.length) - (preferredDays(b).length || settings.workingDays.length)
-      || (weeklyHours(b) || 0) - (weeklyHours(a) || 0) || Number(b.capacity || 0) - Number(a.capacity || 0) || a.documentId.localeCompare(b.documentId);
-  });
-  for (const batch of batchesSorted) {
-    const allocations = sessionDurations(batch);
-    const totalRequiredHours = weeklyHours(batch);
-    if (batch.courseStatus === 'MISSING') { unscheduled.push({ batchDocId: batch.documentId, name: batch.name, requiredHours: totalRequiredHours || 0, scheduledHours: 0, unscheduledHours: totalRequiredHours || 0, reason: 'The batch references a course document that could not be found. Repair its courseDocId in Batch Management.' }); continue; }
-    if (!batch.teacherId) { unscheduled.push({ batchDocId: batch.documentId, name: batch.name, requiredHours: totalRequiredHours || 0, scheduledHours: 0, unscheduledHours: totalRequiredHours || 0, reason: 'Assign an approved trainer to this batch before scheduling.' }); continue; }
-    if (!allocations.length) { unscheduled.push({ batchDocId: batch.documentId, name: batch.name, requiredHours: totalRequiredHours || 0, scheduledHours: 0, unscheduledHours: totalRequiredHours || 0, reason: 'Missing a valid whole-number weekly teaching-hours requirement. Edit this legacy batch and set it in Batch Management.' }); continue; }
-    const participantModes = getParticipantModes(batch);
-    if (participantModes === 'INVALID_HYBRID') { unscheduled.push({ batchDocId: batch.documentId, name: batch.name, requiredHours: totalRequiredHours || 0, scheduledHours: 0, unscheduledHours: totalRequiredHours || 0, reason: 'This batch has both online and offline students but does not offer both learning modes. Update its supported modes.' }); continue; }
-    if (participantModes === 'HYBRID' && !String(batch.onlineClassDetails || '').trim()) { unscheduled.push({ batchDocId: batch.documentId, name: batch.name, requiredHours: totalRequiredHours || 0, scheduledHours: 0, unscheduledHours: totalRequiredHours || 0, reason: 'Mixed online/offline students need online classroom details on this batch before a hybrid lecture can be scheduled.' }); continue; }
-    const currentSessions = sessions.filter((item) => item.batchDocId === batch.documentId);
-    const requiredHours = totalRequiredHours || allocations.reduce((sum, minutes) => sum + minutes / 60, 0);
-    const scheduledBefore = currentSessions.reduce((sum, item) => sum + Number(item.durationMinutes || item.endMinutes - item.startMinutes), 0);
-    let remainingMinutes = Math.max(0, requiredHours * 60 - scheduledBefore);
-    let nextIndex = Math.max(0, ...currentSessions.map((item) => Number(item.sessionIndex) || 0)) + 1;
-    while (remainingMinutes >= 60) {
-      const duration = Math.min(120, remainingMinutes);
-      jobs.push({ batch, duration, sessionIndex: nextIndex });
-      nextIndex += 1;
-      remainingMinutes -= duration;
-    }
-  }
-  // Search all day/time/room combinations. The deterministic score packs
-  // compatible trainers into parallel rooms while spreading a batch's own
-  // lectures across weekdays. Bounded backtracking revises earlier choices
-  // whenever those choices prevent a later, more constrained class.
-  const jobCandidates = (job) => {
-    const { batch, duration, sessionIndex } = job;
-    const days = (batch.availableDays || batch.permittedDays || settings.workingDays).map(normalizedDay);
-    const allowedDays = settings.workingDays.map(normalizedDay).filter((day) => days.includes(day));
-    const modes = batch.learningModes || ['OFFLINE'];
-    const participantMode = getParticipantModes(batch);
-    const rooms = [
-      ...((participantMode === 'HYBRID' || participantMode === 'OFFLINE' || (participantMode === 'UNSPECIFIED' && modes.includes('OFFLINE'))) ? getEligibleRooms(settings).filter((room) => Number(room.capacity) >= roomCapacityRequired(batch) && (!batch.roomType || room.type === batch.roomType)) : []),
-      ...((participantMode === 'ONLINE' || (participantMode === 'UNSPECIFIED' && modes.includes('ONLINE'))) ? [{ id: 'ONLINE', name: 'Online', capacity: Number.MAX_SAFE_INTEGER, type: 'Virtual' }] : []),
-    ];
-    const preferredRoomName = String(batch.roomNumber || '').trim().toLowerCase();
-    const candidates = [];
-    for (const day of allowedDays) for (const start of starts) {
-      const durations = duration === 120 ? [120, 60] : [duration];
-      for (const candidateDuration of durations) {
-      const end = start + candidateDuration;
-      if (end > toMinutes(settings.closeTime) || settingsBreaks.some((item) => overlaps(start, end, toMinutes(item.startTime), toMinutes(item.endTime)))) continue;
-      for (const room of rooms) {
-        const deliveryMode = participantMode === 'HYBRID' ? 'HYBRID' : room.id === 'ONLINE' ? 'ONLINE' : 'OFFLINE';
-        const draft = { id: `${batch.documentId}__${sessionIndex}`, batchDocId: batch.documentId, batchId: batch.batchId, batchName: batch.name, courseName: batch.courseName || batch.course || '', teacherId: batch.teacherId, teacherName: batch.teacherName || '', day, startMinutes: start, endMinutes: end, durationMinutes: candidateDuration, roomId: room.id, roomName: room.name, deliveryMode, ...(deliveryMode === 'HYBRID' || deliveryMode === 'ONLINE' ? { onlineClassDetails: batch.onlineClassDetails || '' } : {}), sessionIndex, source: 'GENERATED', status: 'DRAFT' };
-        if (sessionConflicts(draft, sessions, batches, settings, '', trainers).length) continue;
-        const ownDayCount = sessions.filter((item) => item.batchDocId === batch.documentId && normalizedDay(item.day) === day).length;
-        const exactSlotCount = sessions.filter((item) => normalizedDay(item.day) === day && overlaps(start, end, item.startMinutes, item.endMinutes) && item.roomId !== 'ONLINE' && room.id !== 'ONLINE').length;
-        const dayLoad = sessions.filter((item) => normalizedDay(item.day) === day).length;
-        const roomHours = room.id === 'ONLINE' ? 0 : sessions.filter((item) => item.roomId === room.id).reduce((sum, item) => sum + Number(item.durationMinutes || item.endMinutes - item.startMinutes), 0);
-        const preferredRoomPenalty = preferredRoomName && room.name.toLowerCase() !== preferredRoomName ? 1 : 0;
-        const canRunParallel = rooms.length > 1 && room.id !== 'ONLINE';
-        // With one physical room, pack the working week from the first day and
-        // fill its next available time before moving on. With multiple rooms,
-        // preserve the ability to run independent classes side by side.
-        const score = canRunParallel
-          ? [-exactSlotCount, allowedDays.indexOf(day), ownDayCount, start, preferredRoomPenalty, roomHours, String(room.id)]
-          : [allowedDays.indexOf(day), start, ownDayCount, dayLoad, preferredRoomPenalty, roomHours, String(room.id)];
-        candidates.push({ draft, score });
-      }
-      }
-    }
-    candidates.sort((a, b) => {
-      if (a.draft.durationMinutes !== b.draft.durationMinutes) return b.draft.durationMinutes - a.draft.durationMinutes;
-      for (let index = 0; index < a.score.length; index += 1) {
-        const comparison = typeof a.score[index] === 'string' ? a.score[index].localeCompare(b.score[index]) : a.score[index] - b.score[index];
-        if (comparison) return comparison;
-      }
-      return 0;
-    });
-    return candidates.map((item) => item.draft);
   };
-  const orderedJobs = jobs.sort((a, b) => {
-    const aDays = (a.batch.availableDays || a.batch.permittedDays || settings.workingDays).length;
-    const bDays = (b.batch.availableDays || b.batch.permittedDays || settings.workingDays).length;
-    const aRooms = getEligibleRooms(settings).filter((room) => Number(room.capacity) >= roomCapacityRequired(a.batch)).length + ((a.batch.learningModes || ['OFFLINE']).includes('ONLINE') ? 1 : 0);
-    const bRooms = getEligibleRooms(settings).filter((room) => Number(room.capacity) >= roomCapacityRequired(b.batch)).length + ((b.batch.learningModes || ['OFFLINE']).includes('ONLINE') ? 1 : 0);
-    return aDays - bDays || aRooms - bRooms || b.duration - a.duration || a.sessionIndex - b.sessionIndex || a.batch.documentId.localeCompare(b.batch.documentId);
-  });
-  const starts = [];
-  for (let start = toMinutes(settings.openTime); start < toMinutes(settings.closeTime); start += Number(settings.slotIncrement)) starts.push(start);
-  const baseSessions = sessions.slice(); const nodeLimit = options.nodeLimit || 30000; let visited = 0; let bestSessions = baseSessions.slice(); let bestDepth = 0;
-  const search = (position) => {
-    if (position > bestDepth) { bestDepth = position; bestSessions = sessions.slice(); }
-    if (position >= orderedJobs.length) return true;
-    if (visited >= nodeLimit) return false;
-    const job = orderedJobs[position];
-    const optionsForJob = jobCandidates(job);
-    for (const draft of optionsForJob) {
-      visited += 1;
-      sessions.push(draft);
-      if (search(position + 1)) return true;
-      sessions.pop();
-      if (visited >= nodeLimit) break;
-    }
-    return false;
-  };
-  const complete = search(0);
-  if (!complete) sessions.splice(0, sessions.length, ...bestSessions);
-  for (const batch of batchesSorted) {
-    const requiredHours = weeklyHours(batch) || sessionDurations(batch).reduce((sum, minutes) => sum + minutes / 60, 0);
-    const scheduledHours = sessions.filter((item) => item.batchDocId === batch.documentId).reduce((sum, item) => sum + Number(item.durationMinutes || item.endMinutes - item.startMinutes) / 60, 0);
-    if (unscheduled.some((item) => item.batchDocId === batch.documentId)) continue;
-    if (scheduledHours < requiredHours) {
-      const modes = batch.learningModes || ['OFFLINE'];
-      const rooms = getEligibleRooms(settings).filter((room) => Number(room.capacity) >= roomCapacityRequired(batch) && (!batch.roomType || room.type === batch.roomType));
-      const days = (batch.availableDays || batch.permittedDays || settings.workingDays).map(normalizedDay);
-      const assigned = trainers.find((item) => item.uid === batch.teacherId);
-      const reason = !batch.teacherId ? 'Assign an approved trainer to this batch.'
-        : !allowedDayCount(settings.workingDays, days) ? 'No institute working day is allowed for this batch.'
-          : !rooms.length && !modes.includes('ONLINE') ? `No active room fits capacity ${batch.capacity}${batch.roomType ? ` and room type ${batch.roomType}` : ''}.`
-            : assigned && !fitsAvailability(assigned.availability || assigned.teachingAvailability, settings.workingDays[0], toMinutes(settings.openTime), toMinutes(settings.openTime) + 60) ? 'Trainer availability does not overlap institute working hours.'
-              : `Could not fit ${requiredHours - scheduledHours} remaining weekly hour(s) after searching ${visited} slot alternatives; review trainer, room, day and existing-session conflicts.`;
-      unscheduled.push({ batchDocId: batch.documentId, name: batch.name, requiredHours, scheduledHours, unscheduledHours: Math.max(0, requiredHours - scheduledHours), reason });
-    }
-  }
-  const report = eligibleBatches.map((batch) => {
+  const rows = activeRooms(settings).map((room) => summarise(room.id, room.name, room.type || 'Classroom', sessions.filter((session) => session.roomId === room.id)));
+  const online = sessions.filter((session) => session.roomId === 'ONLINE');
+  if (online.length) rows.push({ ...summarise('ONLINE', 'Online', 'Virtual', online), availableHours: null, utilization: null });
+  return rows;
+}
+
+/* --------------------------------------------------------------------------
+   Generation engine
+   -------------------------------------------------------------------------- */
+
+const NODE_BUDGET = 6000;
+
+function buildReport(eligibleBatches, sessions, unscheduled) {
+  return eligibleBatches.map((batch) => {
     const requiredHours = weeklyHours(batch);
     const batchSessions = sessions.filter((session) => session.batchDocId === batch.documentId);
     const scheduledHours = batchSessions.reduce((sum, session) => sum + Number(session.durationMinutes || session.endMinutes - session.startMinutes) / 60, 0);
     const issue = unscheduled.find((item) => item.batchDocId === batch.documentId);
-    return { batchDocId: batch.documentId, batchName: batch.name, courseName: batch.courseName || batch.course || '', requiredHours: requiredHours || 0, scheduledHours, missingHours: Math.max(0, (requiredHours || 0) - scheduledHours), lectureCount: batchSessions.length, status: issue || !requiredHours || scheduledHours !== requiredHours ? (scheduledHours ? 'PARTIAL' : 'UNSCHEDULED') : 'COMPLETE', reason: issue?.reason || (!requiredHours ? 'Set a valid weekly teaching-hours requirement.' : scheduledHours > requiredHours ? 'Scheduled sessions exceed the weekly requirement; review manual sessions.' : '') };
+    return {
+      batchDocId: batch.documentId, batchName: batch.name, courseName: batch.courseName || batch.course || '',
+      requiredHours: requiredHours || 0, scheduledHours, missingHours: Math.max(0, (requiredHours || 0) - scheduledHours),
+      lectureCount: batchSessions.length,
+      status: issue || !requiredHours || scheduledHours !== requiredHours ? (scheduledHours ? 'PARTIAL' : 'UNSCHEDULED') : 'COMPLETE',
+      reason: issue?.reason || (!requiredHours ? 'Set a valid weekly teaching-hours requirement.' : scheduledHours > requiredHours ? 'Scheduled sessions exceed the weekly requirement; review manual sessions.' : ''),
+    };
   });
-  const generatedSessions = sessions.filter((session) => session.source === 'GENERATED');
-  const roomUtilization = getEligibleRooms(settings).map((room) => {
-    const roomSessions = sessions.filter((session) => session.roomId === room.id);
-    const occupiedMinutes = roomSessions.reduce((sum, session) => sum + Number(session.durationMinutes || session.endMinutes - session.startMinutes), 0);
-    const availability = room.availability || room;
-    const roomDays = (availability.availableDays || availability.workingDays || settings.workingDays).map(normalizedDay);
-    const availableMinutes = settings.workingDays.filter((day) => roomDays.includes(normalizedDay(day))).reduce((weeklyTotal, day) => {
-      const dayAvailability = availability[normalizedDay(day)] || availability[String(normalizedDay(day)).toUpperCase()] || availability;
-      const windows = Array.isArray(dayAvailability.windows) ? dayAvailability.windows : [{
-        startTime: dayAvailability.availableStartTime || dayAvailability.startTime || settings.openTime,
-        endTime: dayAvailability.availableEndTime || dayAvailability.endTime || settings.closeTime,
-      }];
-      const dayMinutes = windows.reduce((sum, window) => {
-        const start = Math.max(toMinutes(settings.openTime), toMinutes(window.startTime || window.start));
-        const end = Math.min(toMinutes(settings.closeTime), toMinutes(window.endTime || window.end));
-        if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return sum;
-        const breaksInWindow = settingsBreaks.reduce((breakMinutes, item) => breakMinutes + Math.max(0, Math.min(end, toMinutes(item.endTime)) - Math.max(start, toMinutes(item.startTime))), 0);
-        return sum + Math.max(0, end - start - breaksInWindow);
-      }, 0);
-      return weeklyTotal + dayMinutes;
-    }, 0);
-    return { roomId: room.id, name: room.name, sessions: roomSessions.length, occupiedHours: occupiedMinutes / 60, availableHours: availableMinutes / 60, utilization: availableMinutes ? Math.round(occupiedMinutes / availableMinutes * 100) : 0 };
-  });
-  const trainerUtilization = [...new Set(eligibleBatches.map((batch) => batch.teacherId).filter(Boolean))].map((uid) => {
-    const teacher = trainers.find((item) => item.uid === uid);
-    const teaching = sessions.filter((session) => session.teacherId === uid);
-    return { uid, name: teacher?.name || teacher?.email || teaching[0]?.teacherName || uid, sessions: teaching.length, occupiedHours: teaching.reduce((sum, item) => sum + Number(item.durationMinutes || item.endMinutes - item.startMinutes) / 60, 0) };
-  });
-  return { sessions, generatedSessions, unscheduled, eligibleCount: eligibleBatches.length, courseCount: new Set(eligibleBatches.map((batch) => batch.courseDocId).filter(Boolean)).size, trainerCount: trainerUtilization.length, roomCount: roomUtilization.length, visitedAlternatives: visited, complete: complete && unscheduled.length === 0, report, roomUtilization, trainerUtilization };
 }
 
-function allowedDayCount(instituteDays, batchDays) { return instituteDays.map(normalizedDay).filter((day) => batchDays.includes(day)).length; }
+function totalsFromReport(report) {
+  return report.reduce((sum, item) => ({
+    requiredHours: sum.requiredHours + item.requiredHours,
+    scheduledHours: sum.scheduledHours + item.scheduledHours,
+    missingHours: sum.missingHours + item.missingHours,
+  }), { requiredHours: 0, scheduledHours: 0, missingHours: 0 });
+}
+
+export function generateSchedule(settings, batches, existingSessions = []) {
+  const eligibleBatches = filterEligibleBatches(batches);
+  const settingsErrors = validateSettings(settings);
+  const base = {
+    eligibleCount: eligibleBatches.length,
+    courseCount: new Set(eligibleBatches.map((batch) => batch.courseDocId).filter(Boolean)).size,
+    trainerCount: new Set(eligibleBatches.map((batch) => batch.teacherId).filter(Boolean)).size,
+    roomCount: activeRooms(settings).length,
+  };
+  if (settingsErrors.length) {
+    const unscheduled = eligibleBatches.map((batch) => ({
+      batchDocId: batch.documentId, name: batch.name, requiredHours: weeklyHours(batch) || 0, scheduledHours: 0,
+      unscheduledHours: weeklyHours(batch) || 0, reason: settingsErrors.join(' '),
+    }));
+    const report = eligibleBatches.map((batch) => ({
+      batchDocId: batch.documentId, batchName: batch.name, courseName: batch.courseName || batch.course || '',
+      requiredHours: weeklyHours(batch) || 0, scheduledHours: 0, missingHours: weeklyHours(batch) || 0,
+      lectureCount: 0, status: 'UNSCHEDULED', reason: settingsErrors.join(' '),
+    }));
+    return { sessions: [], unscheduled, issues: settingsErrors, roomUtilization: [], totals: totalsFromReport(report), ...base, report };
+  }
+
+  // Published and manual sessions are protected: never moved, replaced, or duplicated.
+  const sessions = existingSessions.filter((session) => session.status === 'PUBLISHED' || session.source === 'MANUAL').map((session) => ({ ...session }));
+  const unscheduled = [];
+
+  // Most-constrained batches first: fewest eligible rooms, then most weekly hours,
+  // then largest cohorts, then a stable documentId tie-break.
+  const ordered = [...eligibleBatches].sort((a, b) => {
+    const roomDelta = roomPoolFor(settings, a).length - roomPoolFor(settings, b).length;
+    if (roomDelta) return roomDelta;
+    const hoursDelta = (weeklyHours(b) || 0) - (weeklyHours(a) || 0);
+    if (hoursDelta) return hoursDelta;
+    const capacityDelta = Number(b.capacity || 0) - Number(a.capacity || 0);
+    if (capacityDelta) return capacityDelta;
+    return String(a.documentId).localeCompare(String(b.documentId));
+  });
+
+  for (const batch of ordered) {
+    const pool = roomPoolFor(settings, batch);
+    const allowedDays = (settings.workingDays || []).filter((day) => DAYS.some((item) => item.key === day));
+    const totalRequiredHours = weeklyHours(batch);
+    const fail = (reason) => unscheduled.push({
+      batchDocId: batch.documentId, name: batch.name, requiredHours: totalRequiredHours || 0, scheduledHours: 0,
+      unscheduledHours: totalRequiredHours || 0, reason,
+    });
+
+    if (batch.courseStatus === 'MISSING') { fail('The batch references a course document that could not be found. Repair its courseDocId in Batch Management.'); continue; }
+    if (!batch.teacherId) { fail('Assign an approved trainer to this batch before scheduling.'); continue; }
+
+    const currentSessions = sessions.filter((session) => session.batchDocId === batch.documentId);
+    const requiredMinutes = totalRequiredHours ? totalRequiredHours * 60 : sessionDurations(batch).reduce((sum, minutes) => sum + minutes, 0);
+    if (!requiredMinutes) { fail('Missing a valid whole-number weekly teaching-hours requirement. Edit this legacy batch and set it in Batch Management.'); continue; }
+
+    const scheduledBefore = currentSessions.reduce((sum, session) => sum + Number(session.durationMinutes || session.endMinutes - session.startMinutes), 0);
+    // Prefer whole two-hour sessions, but fall back to one-hour sessions when the
+    // operating window can only host a single hour on every working day.
+    const chunk = candidateStarts(settings, 120).length ? 120 : 60;
+    const durations = [];
+    for (let remaining = Math.max(0, requiredMinutes - scheduledBefore); remaining >= 60; remaining -= Math.min(chunk, remaining)) {
+      durations.push(Math.min(chunk, remaining));
+    }
+
+    const baseIndex = Math.max(0, ...currentSessions.map((session) => Number(session.sessionIndex) || 0));
+    const assigned = [];
+    let best = [];
+    let nodes = 0;
+
+    const candidatesFor = (duration, committed) => {
+      const roomUsage = new Map();
+      const dayLoad = new Map();
+      const batchDayCount = new Map();
+      for (const session of committed) {
+        roomUsage.set(session.roomId, (roomUsage.get(session.roomId) || 0) + 1);
+        dayLoad.set(session.day, (dayLoad.get(session.day) || 0) + 1);
+        if (session.batchDocId === batch.documentId) batchDayCount.set(session.day, (batchDayCount.get(session.day) || 0) + 1);
+      }
+      const days = [...allowedDays].sort((a, b) => (batchDayCount.get(a) || 0) - (batchDayCount.get(b) || 0)
+        || (dayLoad.get(a) || 0) - (dayLoad.get(b) || 0) || dayIndex(a) - dayIndex(b));
+      const rooms = [...pool].sort((a, b) => (roomUsage.get(a.id) || 0) - (roomUsage.get(b.id) || 0)
+        || (a.id === 'ONLINE' ? 1 : 0) - (b.id === 'ONLINE' ? 1 : 0)
+        || Number(a.capacity || 0) - Number(b.capacity || 0)
+        || String(a.id).localeCompare(String(b.id)));
+      const output = [];
+      for (const day of days) for (const start of candidateStarts(settings, duration)) for (const room of rooms) {
+        output.push({ day, startMinutes: start, endMinutes: start + duration, room });
+      }
+      return output;
+    };
+
+    const place = (index) => {
+      if (index >= durations.length) return true;
+      if (nodes > NODE_BUDGET) return false;
+      for (const candidate of candidatesFor(durations[index], sessions.concat(assigned))) {
+        nodes += 1;
+        if (nodes > NODE_BUDGET) return false;
+        const draft = {
+          id: `${batch.documentId}__${baseIndex + index + 1}`,
+          batchDocId: batch.documentId, batchId: batch.batchId, batchName: batch.name,
+          courseName: batch.courseName || batch.course || '',
+          teacherId: batch.teacherId, teacherName: batch.teacherName || '',
+          day: candidate.day, startMinutes: candidate.startMinutes, endMinutes: candidate.endMinutes,
+          durationMinutes: durations[index], sessionIndex: baseIndex + index + 1,
+          roomId: candidate.room.id, roomName: candidate.room.name,
+          source: 'GENERATED', status: 'DRAFT',
+        };
+        if (sessionConflicts(draft, sessions.concat(assigned), batches, settings).length) continue;
+        assigned.push(draft);
+        if (assigned.length > best.length) best = assigned.slice();
+        if (place(index + 1)) return true;
+        assigned.pop();
+      }
+      return false;
+    };
+    // Keep the fullest achievable set for this batch even when some hours cannot fit.
+    const complete = place(0);
+    sessions.push(...(complete ? assigned : best));
+
+    const scheduledHours = sessions.filter((session) => session.batchDocId === batch.documentId)
+      .reduce((sum, session) => sum + Number(session.durationMinutes || session.endMinutes - session.startMinutes) / 60, 0);
+    const requiredHours = totalRequiredHours || requiredMinutes / 60;
+    if (scheduledHours < requiredHours) {
+      const modes = batch.learningModes || ['OFFLINE'];
+      const reason = !allowedDays.length ? 'No institute working days are enabled. Configure working days in timetable settings.'
+        : !pool.length ? (modes.includes('OFFLINE') ? `No configured room can fit the batch capacity of ${batch.capacity}${modes.includes('ONLINE') ? ' and the batch has no online option.' : '.'}` : 'No online room is available.')
+          : `Only ${scheduledHours} of ${requiredHours} teaching hours fit without a teacher, room, batch, break, or working-hours conflict.`;
+      unscheduled.push({ batchDocId: batch.documentId, name: batch.name, requiredHours, scheduledHours, unscheduledHours: Math.max(0, requiredHours - scheduledHours), reason });
+    }
+  }
+
+  const report = buildReport(eligibleBatches, sessions, unscheduled);
+  return {
+    sessions,
+    unscheduled,
+    issues: validateSchedule(sessions, batches, settings),
+    roomUtilization: computeRoomUtilization(settings, sessions),
+    totals: totalsFromReport(report),
+    ...base,
+    report,
+  };
+}

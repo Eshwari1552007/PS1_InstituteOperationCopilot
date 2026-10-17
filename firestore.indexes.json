@@ -29,17 +29,17 @@
       "collectionGroup": "enrollments",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "batchDocId", "order": "ASCENDING" },
-        { "fieldPath": "status", "order": "ASCENDING" },
-        { "fieldPath": "learningMode", "order": "ASCENDING" }
+        { "fieldPath": "teacherId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" }
       ]
     },
     {
-      "collectionGroup": "attendanceSessions",
+      "collectionGroup": "enrollments",
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "batchDocId", "order": "ASCENDING" },
-        { "fieldPath": "status", "order": "ASCENDING" }
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "learningMode", "order": "ASCENDING" }
       ]
     },
     {

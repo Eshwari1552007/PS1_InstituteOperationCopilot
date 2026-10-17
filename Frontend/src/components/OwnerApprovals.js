@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { collection, getDocs } from 'firebase/firestore';
 import { AlertCircle, Check, RefreshCw, X } from 'lucide-react';
 import { STAFF_ROLES, reviewRegistration } from '../auth/authService';
+import { useToast } from './Toast';
 import { db } from '../firebase';
 
 const TABS = ['PENDING', 'APPROVED', 'REJECTED'];
@@ -12,6 +13,7 @@ function formatDate(value) {
 }
 
 export default function OwnerApprovals({ ownerUid }) {
+  const toast = useToast();
   const [records, setRecords] = useState([]);
   const [tab, setTab] = useState('PENDING');
   const [reasons, setReasons] = useState({});
@@ -26,13 +28,14 @@ export default function OwnerApprovals({ ownerUid }) {
       const snapshot = await getDocs(collection(db, 'users'));
       setRecords(snapshot.docs.map((item) => ({ uid: item.id, ...item.data() })).filter((item) => STAFF_ROLES.includes(item.role)));
     } catch (failure) {
-      setError(failure.code === 'permission-denied'
+      const text = failure.code === 'permission-denied'
         ? 'Only the approved Owner profile can view registration requests. Confirm this account is provisioned as OWNER.'
-        : `Could not load registration requests: ${failure.message}`);
+        : `Could not load registration requests: ${failure.message}`;
+      setError(text); toast.error(text, 'Approvals');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [toast]);
 
   useEffect(() => { loadRequests(); }, [loadRequests]);
 
@@ -47,9 +50,11 @@ export default function OwnerApprovals({ ownerUid }) {
     setError('');
     try {
       await reviewRegistration({ uid: record.uid, approve, reason: reasons[record.uid] || '', ownerUid });
+      toast.success(`${record.name || record.email} ${approve ? 'approved' : 'rejected'}.`, 'Registration review');
       await loadRequests();
     } catch (failure) {
-      setError(`Could not ${approve ? 'approve' : 'reject'} this request: ${failure.message}`);
+      const text = `Could not ${approve ? 'approve' : 'reject'} this request: ${failure.message}`;
+      setError(text); toast.error(text, 'Review failed');
     } finally {
       setBusyUid('');
     }

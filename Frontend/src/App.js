@@ -7,10 +7,12 @@ import RoleSidebar from './components/RoleSidebar';
 import StudentManagement from './students/StudentManagement';
 import BatchesCourses from './batches/BatchesCourses';
 import StudentPortal from './students/StudentPortal';
-import AttendanceWorkspace from './students/AttendanceWorkspace';
 import StudentAttendance from './students/StudentAttendance';
+import AttendanceWorkspace from './students/AttendanceWorkspace';
 import FeesWorkspace from './students/FeesWorkspace';
 import Timetable from './timetable/Timetable';
+import Copilot from './components/Copilot';
+import Dashboard from './components/Dashboard';
 import { PUBLIC_ROLES, completeProfile, logout, observeAuth } from './auth/authService';
 import { db } from './firebase';
 import './App.css';
@@ -60,15 +62,6 @@ function AccountState({ profile, onLogout }) {
     <p>{rejected ? (profile.rejectionReason || 'Contact the institute Owner for more information.') : 'Your staff request has been submitted. You can sign out and return after the Owner reviews it.'}</p>
     <p className="ep-profile-chip">{profile.email} · {profile.role}</p>
     <button className="ep-approve" type="button" onClick={onLogout}>Sign out</button>
-  </section>;
-}
-
-function Dashboard({ profile }) {
-  return <section className="ep-content-card">
-    <p className="ep-eyebrow">{profile.role} WORKSPACE</p>
-    <h1>{profile.role === 'STUDENT' ? 'Student Home' : 'Dashboard'}</h1>
-    <p>Welcome, {profile.name || profile.email}. Your verified EDUPILOT role is {profile.role}.</p>
-    {profile.role === 'OWNER' && <p>Use Approvals in the sidebar to review staff registrations.</p>}
   </section>;
 }
 
@@ -122,12 +115,13 @@ export default function App() {
 
   const navigate = (nextRoute, detailId = '') => {
     const allowed = nextRoute === 'dashboard'
+      || (nextRoute === 'copilot' && ['OWNER', 'COUNSELOR', 'TRAINER', 'STUDENT', 'ACCOUNTS'].includes(profile?.role))
       || (nextRoute === 'approvals' && profile?.role === 'OWNER')
       || (nextRoute === 'students' && ['OWNER', 'COUNSELOR'].includes(profile?.role))
       || (nextRoute === 'batches' && ['OWNER', 'COUNSELOR', 'TRAINER'].includes(profile?.role));
     const permitted = allowed
       || (nextRoute === 'attendance' && ['OWNER', 'COUNSELOR', 'TRAINER', 'STUDENT'].includes(profile?.role))
-      || (nextRoute === 'fees' && ['OWNER', 'COUNSELOR', 'ACCOUNTS'].includes(profile?.role));
+      || (nextRoute === 'fees' && ['OWNER', 'ACCOUNTS'].includes(profile?.role));
     const withTimetable = permitted || (nextRoute === 'timetable' && ['OWNER', 'TRAINER', 'STUDENT'].includes(profile?.role));
     const safeRoute = withTimetable ? nextRoute : 'dashboard';
     if (safeRoute === 'timetable') setTimetableBatchId(detailId);
@@ -150,15 +144,17 @@ export default function App() {
         ? 'batches'
       : route === 'attendance' && ['OWNER', 'COUNSELOR', 'TRAINER', 'STUDENT'].includes(profile.role)
         ? 'attendance'
-      : route === 'fees' && ['OWNER', 'COUNSELOR', 'ACCOUNTS'].includes(profile.role)
+      : route === 'fees' && ['OWNER', 'ACCOUNTS'].includes(profile.role)
         ? 'fees'
       : route === 'timetable' && ['OWNER', 'TRAINER', 'STUDENT'].includes(profile.role)
         ? 'timetable'
+      : route === 'copilot' && ['OWNER', 'COUNSELOR', 'TRAINER', 'STUDENT', 'ACCOUNTS'].includes(profile.role)
+        ? 'copilot'
       : 'dashboard';
   return <div className="ep-app">
     <RoleSidebar profile={profile} active={authorizedRoute} onNavigate={navigate} onLogout={handleLogout} />
     <main className="ep-main">
-      {authorizedRoute === 'approvals' ? <OwnerApprovals ownerUid={account.uid} /> : authorizedRoute === 'students' ? <StudentManagement profile={profile} /> : authorizedRoute === 'batches' ? <BatchesCourses profile={profile} /> : authorizedRoute === 'attendance' ? (profile.role === 'STUDENT' ? <StudentAttendance profile={profile} /> : <AttendanceWorkspace profile={profile} />) : authorizedRoute === 'fees' ? <FeesWorkspace profile={profile} /> : authorizedRoute === 'timetable' ? <Timetable profile={profile} initialBatchId={timetableBatchId} /> : profile.role === 'STUDENT' ? <StudentPortal profile={profile} onNavigate={navigate} /> : <Dashboard profile={profile} />}
+      {authorizedRoute === 'approvals' ? <OwnerApprovals ownerUid={account.uid} /> : authorizedRoute === 'students' ? <StudentManagement profile={profile} /> : authorizedRoute === 'batches' ? <BatchesCourses profile={profile} /> : authorizedRoute === 'attendance' ? (profile.role === 'STUDENT' ? <StudentAttendance profile={profile} /> : <AttendanceWorkspace profile={profile} />) : authorizedRoute === 'fees' ? <FeesWorkspace profile={profile} /> : authorizedRoute === 'timetable' ? <Timetable profile={profile} initialBatchId={timetableBatchId} /> : authorizedRoute === 'copilot' ? <Copilot profile={profile} onNavigate={navigate} /> : profile.role === 'STUDENT' ? <StudentPortal profile={profile} onNavigate={navigate} /> : <Dashboard profile={profile} onNavigate={navigate} />}
     </main>
   </div>;
 }

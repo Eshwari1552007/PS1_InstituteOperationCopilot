@@ -49,3 +49,5 @@ export async function reauthenticateCurrentStudent(password) {
 }
 
 export const confirmDemoEnrollment = (payload) => request('/confirm-demo', payload, true);
+
+export const payInstallment = (payload) => request('/installment', payload, true);

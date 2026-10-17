@@ -5,6 +5,7 @@ import AnimatedInput from './AnimatedInput';
 import Button from './Button';
 import PasswordInput from './PasswordInput';
 import { register } from '../auth/authService';
+import { useToast } from './Toast';
 
 const ROLE_OPTIONS = [
   { value: 'STUDENT', label: 'Student' },
@@ -14,6 +15,7 @@ const ROLE_OPTIONS = [
 ];
 
 export default function SignupForm({ onBack }) {
+  const toast = useToast();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
@@ -26,14 +28,18 @@ export default function SignupForm({ onBack }) {
   const handleSubmit = async (event) => {
     event.preventDefault();
     setError('');
-    if (name.trim().length < 2) return setError('Enter your full name.');
-    if (password.length < 6) return setError('Choose a password with at least 6 characters.');
-    if (password !== confirmPassword) return setError('Passwords do not match.');
+    const reject = (text) => { setError(text); toast.warning(text, 'Check your details'); };
+    if (name.trim().length < 2) return reject('Enter your full name.');
+    if (role === 'STUDENT' && !phone.trim()) return reject('Enter your phone number.');
+    if (password.length < 6) return reject('Choose a password with at least 6 characters.');
+    if (password !== confirmPassword) return reject('Passwords do not match.');
     setBusy(true);
     try {
       await register({ name: name.trim(), email: email.trim(), phone, password, role });
+      toast.success(role === 'STUDENT' ? 'Your student account is ready. Setting up your home page…' : 'Account created. Staff access stays pending until an Owner approves it.', 'Welcome to EDUPILOT');
     } catch (failure) {
       setError(failure.message);
+      toast.error(failure.message, 'Could not create account');
     } finally {
       setBusy(false);
     }

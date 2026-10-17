@@ -19,6 +19,7 @@ import Button from './Button';
 import Logo from './Logo';
 import PasswordInput from './PasswordInput';
 import { login, requestPasswordReset } from '../auth/authService';
+import { useToast } from './Toast';
 import SignupForm from './SignupForm';
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -109,6 +110,7 @@ function SuccessPanel() {
 }
 
 export default function AuthForm({ onAuthenticated }) {
+  const toast = useToast();
   const [view, setView] = useState('login');
   const [role, setRole] = useState('STUDENT');
   const [email, setEmail] = useState('');
@@ -157,6 +159,7 @@ export default function AuthForm({ onAuthenticated }) {
     setErrors(nextErrors);
     if (Object.keys(nextErrors).length > 0) {
       setStatus(null);
+      toast.warning(Object.values(nextErrors).join(' '), 'Check your details');
       triggerShake();
       return;
     }
@@ -171,6 +174,8 @@ export default function AuthForm({ onAuthenticated }) {
     } catch (error) {
       const tone = error.code === 'rejected' ? 'error' : 'warn';
       setStatus({ tone, message: error.message });
+      if (tone === 'error') toast.error(error.message, 'Sign in blocked');
+      else toast.warning(error.message, 'Sign in failed');
       triggerShake();
     } finally {
       setSubmitting(false);
@@ -183,6 +188,7 @@ export default function AuthForm({ onAuthenticated }) {
 
     if (!email.trim() || !EMAIL_PATTERN.test(email.trim())) {
       setErrors({ email: 'Enter the email address on your account.' });
+      toast.warning('Enter the email address on your account.', 'Check your details');
       triggerShake();
       return;
     }
@@ -193,10 +199,13 @@ export default function AuthForm({ onAuthenticated }) {
 
     try {
       await requestPasswordReset(email.trim());
+      toast.success(`If an account exists for ${email.trim()}, a reset link is on its way.`, 'Reset link sent');
       goTo('reset-sent');
     } catch (error) {
       const tone = error.code === 'rejected' ? 'error' : 'warn';
       setStatus({ tone, message: error.message });
+      if (tone === 'error') toast.error(error.message, 'Reset blocked');
+      else toast.warning(error.message, 'Reset failed');
     } finally {
       setSubmitting(false);
     }

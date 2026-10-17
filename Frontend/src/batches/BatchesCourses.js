@@ -6,6 +6,7 @@ import {
   loadAcademyWorkspace, saveBatch, saveCourse, setBatchClosed, transferStudent,
   withdrawStudent,
 } from './academyService';
+import { useToast } from '../components/Toast';
 import './batches.css';
 
 const blankCourse = { name: '', description: '', category: '', duration: 1, durationUnit: 'months', fee: 0, status: 'ACTIVE' };
@@ -107,12 +108,13 @@ function BatchForm({ initial, courses, teachers, busy, error, onClose, onSave })
 }
 
 function BatchDetails({ batch, courses, profile, allBatches, onClose, onChanged }) {
+  const toast = useToast();
   const [roster, setRoster] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [destination, setDestination] = useState({});
   const [busyId, setBusyId] = useState('');
-  const refresh = useCallback(async () => { setLoading(true); setError(''); try { setRoster(await getBatchRoster(batch.documentId, profile.role, profile.uid)); } catch (failure) { setError(message(failure)); } finally { setLoading(false); } }, [batch.documentId, profile.role, profile.uid]);
+  const refresh = useCallback(async () => { setLoading(true); setError(''); try { setRoster(await getBatchRoster(batch.documentId, profile.role, profile.uid)); } catch (failure) { const text = message(failure); setError(text); toast.error(text, 'Could not load roster'); } finally { setLoading(false); } }, [batch.documentId, profile.role, profile.uid, toast]);
   useEffect(() => { refresh(); }, [refresh]);
   const course = courses.find((item) => item.documentId === batch.courseDocId);
   const canManageEnrollment = ['OWNER', 'COUNSELOR'].includes(profile.role);
@@ -120,15 +122,15 @@ function BatchDetails({ batch, courses, profile, allBatches, onClose, onChanged 
   const transfer = async (student) => {
     if (!destination[student.documentId]) return;
     setBusyId(student.documentId); setError('');
-    try { const target = allBatches.find((item) => item.documentId === destination[student.documentId]); await transferStudent(student.documentId, target.courseDocId, target.documentId, profile.uid); await onChanged(); await refresh(); }
-    catch (failure) { setError(message(failure)); }
+    try { const target = allBatches.find((item) => item.documentId === destination[student.documentId]); await transferStudent(student.documentId, target.courseDocId, target.documentId, profile.uid); toast.success(`${student.fullName} moved to ${target.name}.`, 'Enrollment updated'); await onChanged(); await refresh(); }
+    catch (failure) { const text = message(failure); setError(text); toast.error(text, 'Could not transfer student'); }
     finally { setBusyId(''); }
   };
   const withdraw = async (student) => {
     if (!window.confirm(`Withdraw ${student.fullName} from ${batch.name}? Their student record will be kept.`)) return;
     setBusyId(student.documentId); setError('');
-    try { await withdrawStudent(student.documentId, profile.uid); await onChanged(); await refresh(); }
-    catch (failure) { setError(message(failure)); }
+    try { await withdrawStudent(student.documentId, profile.uid); toast.success(`${student.fullName} withdrawn from ${batch.name}.`, 'Enrollment updated'); await onChanged(); await refresh(); }
+    catch (failure) { const text = message(failure); setError(text); toast.error(text, 'Could not withdraw student'); }
     finally { setBusyId(''); }
   };
   return <div className="bc-backdrop"><section className="bc-dialog bc-dialog--wide" role="dialog" aria-modal="true" aria-labelledby="bc-detail-title">
@@ -175,6 +177,7 @@ function EnrollmentForm({ students, courses, batches, busy, error, onClose, onEn
 }
 
 export default function BatchesCourses({ profile }) {
+  const toast = useToast();
   const isOwner = profile.role === 'OWNER';
   const canEnroll = ['OWNER', 'COUNSELOR'].includes(profile.role);
   const [tab, setTab] = useState('batches');
@@ -203,9 +206,9 @@ export default function BatchesCourses({ profile }) {
       ]);
       setCourses(workspace.courses); setBatches(workspace.batches); setTeachers(workspace.teachers);
       setStudents(studentResult.records);
-    } catch (failure) { setLoadError(message(failure)); }
+    } catch (failure) { const text = message(failure); setLoadError(text); toast.error(text, 'Could not load academics'); }
     finally { setLoading(false); }
-  }, [profile.role, profile.uid, canEnroll]);
+  }, [profile.role, profile.uid, canEnroll, toast]);
   useEffect(() => { refresh(); }, [refresh]);
 
   const visibleCourses = useMemo(() => courses.filter((course) => !course.isArchived)
@@ -223,8 +226,8 @@ export default function BatchesCourses({ profile }) {
 
   const mutate = async (operation, success) => {
     setBusy(true); setError(''); setNotice('');
-    try { await operation(); setModal(null); setNotice(success); await refresh(); }
-    catch (failure) { setError(message(failure)); }
+    try { await operation(); setModal(null); setNotice(success); toast.success(success, 'Academics'); await refresh(); }
+    catch (failure) { const text = message(failure); setError(text); toast.error(text, 'Action failed'); }
     finally { setBusy(false); }
   };
   const handleCourseSave = (value) => mutate(() => saveCourse(value, profile.uid, modal.course?.documentId || ''), modal.course ? 'Course updated.' : 'Course created.');

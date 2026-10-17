@@ -136,7 +136,7 @@ export async function completeProfile({ user, name, role, phone = '' }) {
   }
 }
 
-async function ensureStudentRecord(user, name, phone) {
+export async function ensureStudentRecord(user, name, phone) {
   const studentRef = doc(db, 'students', user.uid);
   const year = new Date().getFullYear();
   const sequenceRef = doc(db, 'sequences', `student-${year}`);

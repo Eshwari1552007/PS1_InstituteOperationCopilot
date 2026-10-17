@@ -1,5 +1,5 @@
 const express = require('express');
-const { paymentIdFor, validateAdvance, hasRecentAuthentication } = require('../services/enrollmentPayments');
+const { paymentIdFor, validateAdvance, hasRecentAuthentication, toMinorUnits } = require('../services/enrollmentPayments');
 
 const roleCollection = 'users';
 const approvedStudent = (profile) => profile?.role === 'STUDENT' && profile?.status === 'APPROVED';
@@ -133,6 +133,59 @@ function createEnrollmentRoutes({ admin, db }) {
         return { enrollmentId: enrollmentRef.id, totalFee: fee, amountPaid: paid, remainingBalance: remaining, idempotent: false };
       });
       res.json({ ...result, isDemo: true, status: 'DEMO_CONFIRMED' });
+    } catch (error) { next(error); }
+  });
+
+  router.post('/installment', async (req, res, next) => {
+    try {
+      if (!hasRecentAuthentication(req.authTime)) throw dataError(401, 'RECENT_LOGIN_REQUIRED', 'Reauthenticate your EDUPILOT account, then try again.');
+      const { enrollmentId, amount: amountInput, requestId, reference } = req.body || {};
+      if (typeof enrollmentId !== 'string' || enrollmentId.length === 0 || enrollmentId.length > 256) throw dataError(400, 'ENROLLMENT_INVALID', 'Choose a valid course enrollment.');
+      if (typeof requestId !== 'string' || !/^[a-f0-9-]{16,64}$/i.test(requestId)) throw dataError(400, 'REQUEST_INVALID', 'Refresh the payment dialog and try again.');
+      const uid = req.studentUid;
+      const paymentId = paymentIdFor(uid, `installment_${requestId}`);
+      const paymentRef = db.collection('payments').doc(paymentId);
+      const enrollmentRef = db.collection('enrollments').doc(enrollmentId);
+      const feeRef = db.collection('feeRecords').doc(enrollmentId);
+      const historyRef = db.collection('enrollmentHistory').doc(`installment_${paymentId}`);
+      const result = await db.runTransaction(async (transaction) => {
+        const [paymentSnap, enrollmentSnap, feeSnap] = await Promise.all([
+          transaction.get(paymentRef), transaction.get(enrollmentRef), transaction.get(feeRef),
+        ]);
+        if (enrollmentSnap.exists && enrollmentSnap.data().studentDocId !== uid) throw dataError(403, 'NOT_YOUR_ENROLLMENT', 'This course enrollment does not belong to your account.');
+        if (!enrollmentSnap.exists || enrollmentSnap.data().status !== 'ACTIVE') throw dataError(404, 'ENROLLMENT_NOT_ACTIVE', 'No active enrollment was found for this course.');
+        if (!feeSnap.exists) throw dataError(404, 'FEE_RECORD_MISSING', 'Your fee record is not ready yet. Contact the institute.');
+        const enrollment = enrollmentSnap.data();
+        const feeData = feeSnap.data();
+        if (paymentSnap.exists) {
+          const existing = paymentSnap.data();
+          if (existing.studentDocId !== uid || existing.feeRecordId !== enrollmentId || existing.amount !== Number(amountInput)) throw dataError(409, 'IDEMPOTENCY_CONFLICT', 'This payment request ID was already used for a different installment.');
+          return { enrollmentId, totalFee: feeData.totalFee, amountPaid: feeData.amountPaid, remainingBalance: feeData.remainingBalance, paid: existing.amount, status: 'VERIFIED', idempotent: true };
+        }
+        const total = toMinorUnits(feeData.totalFee);
+        const alreadyPaid = toMinorUnits(feeData.amountPaid ?? 0);
+        if (total === null || total <= 0) throw dataError(400, 'FEE_INVALID', 'This course has an invalid or zero fee. Contact the institute.');
+        const balance = total - alreadyPaid;
+        if (balance <= 0) throw dataError(409, 'ALREADY_PAID', 'This course is already fully paid.');
+        const amount = toMinorUnits(amountInput);
+        if (amount === null || amount <= 0) throw dataError(400, 'AMOUNT_INVALID', 'Enter a valid positive installment amount (up to two decimals).');
+        if (amount > balance) throw dataError(400, 'AMOUNT_TOO_HIGH', `The installment cannot exceed the remaining balance of ${money(balance)}.`);
+        const paid = alreadyPaid + amount;
+        const remaining = total - paid;
+        const now = admin.firestore.FieldValue.serverTimestamp();
+        transaction.create(paymentRef, {
+          feeRecordId: enrollmentId, enrollmentId, studentDocId: uid, studentId: enrollment.studentId || feeData.studentId || '',
+          batchDocId: enrollment.batchDocId || feeData.batchDocId || null, learningMode: feeData.learningMode || enrollment.learningMode || 'OFFLINE',
+          totalFee: money(total), amount: money(amount), remainingBalance: money(remaining),
+          method: 'ONLINE', purpose: 'TUITION', status: 'VERIFIED', isDemo: false,
+          reference: typeof reference === 'string' && reference.trim() ? reference.trim().slice(0, 120) : null,
+          recordedBy: uid, createdAt: now,
+        });
+        transaction.update(feeRef, { amountPaid: money(paid), remainingBalance: money(remaining), paymentStatus: remaining === 0 ? 'PAID' : 'PARTIALLY_PAID', lastPaymentId: paymentId, updatedAt: now, updatedBy: uid });
+        transaction.create(historyRef, { studentDocId: uid, studentId: enrollment.studentId || '', courseDocId: enrollment.courseDocId || null, batchDocId: enrollment.batchDocId || null, action: 'INSTALLMENT_PAID', actorUid: uid, paymentId, createdAt: now });
+        return { enrollmentId, totalFee: money(total), amountPaid: money(paid), remainingBalance: money(remaining), paid: money(amount), status: 'VERIFIED', idempotent: false };
+      });
+      res.json({ ...result, isDemo: false });
     } catch (error) { next(error); }
   });
 

@@ -7,10 +7,10 @@ const MENU = {
     ['Attendance', ClipboardCheck, true], ['Fees & EMI', CircleDollarSign, true], ['Timetable', CalendarDays],
     ['AI Copilot', Sparkles], ['Approvals', Users, true], ['Audit Log', ClipboardCheck],
   ],
-  COUNSELOR: [['Dashboard', LayoutDashboard, true], ['Students', GraduationCap], ['Batches & Courses', BookOpen], ['Attendance', ClipboardCheck, true], ['Fees & EMI', CircleDollarSign, true], ['AI Copilot', Sparkles]],
+  COUNSELOR: [['Dashboard', LayoutDashboard, true], ['Students', GraduationCap], ['Batches & Courses', BookOpen], ['Attendance', ClipboardCheck, true], ['AI Copilot', Sparkles]],
   TRAINER: [['Dashboard', LayoutDashboard, true], ['My Batches', BookOpen], ['Attendance', ClipboardCheck, true], ['Timetable', CalendarDays], ['AI Copilot', Sparkles]],
   ACCOUNTS: [['Dashboard', LayoutDashboard, true], ['Fees & EMI', CircleDollarSign, true], ['Approvals · financial only', Users], ['AI Copilot', Sparkles]],
-  STUDENT: [['Student Home', LayoutDashboard, true], ['Attendance', ClipboardCheck, true], ['Timetable', CalendarDays]],
+  STUDENT: [['Student Home', LayoutDashboard, true], ['Attendance', ClipboardCheck, true], ['Timetable', CalendarDays], ['AI Copilot', Sparkles]],
 };
 
 export default function RoleSidebar({ profile, onLogout, active, onNavigate }) {
@@ -31,11 +31,11 @@ export default function RoleSidebar({ profile, onLogout, active, onNavigate }) {
         </div>
         <nav aria-label="Main navigation" className="ep-nav">
           {menu.map(([label, Icon, enabled]) => {
-            const target = label === 'Approvals' ? 'approvals' : label === 'Students' ? 'students' : label.includes('Batches') || label === 'My Batches' ? 'batches' : label === 'Attendance' ? 'attendance' : label.includes('Fees') ? 'fees' : label === 'Timetable' ? 'timetable' : 'dashboard';
+            const target = label === 'Approvals' ? 'approvals' : label === 'AI Copilot' ? 'copilot' : label === 'Students' ? 'students' : label.includes('Batches') || label === 'My Batches' ? 'batches' : label === 'Attendance' ? 'attendance' : label.includes('Fees') ? 'fees' : label === 'Timetable' ? 'timetable' : 'dashboard';
             const canNavigate = Boolean(enabled)
               || (target === 'students' && ['OWNER', 'COUNSELOR'].includes(profile.role))
               || (target === 'batches' && ['OWNER', 'COUNSELOR', 'TRAINER'].includes(profile.role));
-            const finalCanNavigate = canNavigate || (target === 'attendance' && ['OWNER', 'COUNSELOR', 'TRAINER', 'STUDENT'].includes(profile.role)) || (target === 'fees' && ['OWNER', 'COUNSELOR', 'ACCOUNTS'].includes(profile.role)) || (target === 'timetable' && ['OWNER', 'TRAINER', 'STUDENT'].includes(profile.role));
+            const finalCanNavigate = canNavigate || target === 'copilot' || (target === 'attendance' && ['OWNER', 'COUNSELOR', 'TRAINER'].includes(profile.role)) || (target === 'fees' && ['OWNER', 'ACCOUNTS'].includes(profile.role)) || (target === 'timetable' && ['OWNER', 'TRAINER', 'STUDENT'].includes(profile.role));
             return (
               <button
                 key={label}

@@ -81,15 +81,21 @@ export async function listStudents(role) {
         enrollmentByStudent.set(record.studentDocId, current);
       });
       records.forEach((student) => { student.enrollments = enrollmentByStudent.get(student.documentId) || []; });
-      const feeSnapshot = await getDocs(collection(db, 'feeRecords'));
-      const feeByStudent = new Map();
-      feeSnapshot.docs.forEach((item) => {
-        const fee = item.data(); const current = feeByStudent.get(fee.studentDocId) || { totalFees: 0, amountPaid: 0, remainingBalance: 0 };
-        current.totalFees += Number(fee.totalFee || 0); current.amountPaid += Number(fee.amountPaid || 0); current.remainingBalance += Number(fee.remainingBalance || 0);
-        feeByStudent.set(fee.studentDocId, current);
-      });
-      records.forEach((student) => { const amounts = feeByStudent.get(student.documentId) || { totalFees: 0, amountPaid: 0, remainingBalance: 0 }; Object.assign(student, amounts, { paymentStatus: amounts.remainingBalance <= 0 && amounts.totalFees > 0 ? 'PAID' : amounts.amountPaid > 0 ? 'PARTIALLY_PAID' : 'UNPAID' }); });
     } catch { records.forEach((student) => { student.enrollments = []; }); }
+    // Counselors manage admissions and rosters but cannot read the financial
+    // collections or see payment summaries in the student directory.
+    if (role !== 'COUNSELOR' && directoryAvailable) {
+      try {
+        const feeSnapshot = await getDocs(collection(db, 'feeRecords'));
+        const feeByStudent = new Map();
+        feeSnapshot.docs.forEach((item) => {
+          const fee = item.data(); const current = feeByStudent.get(fee.studentDocId) || { totalFees: 0, amountPaid: 0, remainingBalance: 0 };
+          current.totalFees += Number(fee.totalFee || 0); current.amountPaid += Number(fee.amountPaid || 0); current.remainingBalance += Number(fee.remainingBalance || 0);
+          feeByStudent.set(fee.studentDocId, current);
+        });
+        records.forEach((student) => { const amounts = feeByStudent.get(student.documentId) || { totalFees: 0, amountPaid: 0, remainingBalance: 0 }; Object.assign(student, amounts, { paymentStatus: amounts.remainingBalance <= 0 && amounts.totalFees > 0 ? 'PAID' : amounts.amountPaid > 0 ? 'PARTIALLY_PAID' : 'UNPAID' }); });
+      } catch { /* keep academic records available if finance reads are unavailable */ }
+    }
   }
   const knownEmails = new Set(records.map((item) => String(item.email || '').trim().toLowerCase()).filter(Boolean));
   if (profilesAvailable) {
