@@ -46,6 +46,18 @@ service cloud.firestore {
 
     function canManageEnrollment() { return isOwner() || isCounselor(); }
 
+    function validWeeklySessionDuration(batchId, data, allowReviewFlag) {
+      let batch = get(/databases/$(database)/documents/batches/$(batchId)).data;
+      return (allowReviewFlag && data.needsReview == true
+          && data.diff(resource.data).affectedKeys().hasOnly(['needsReview', 'reviewReason', 'updatedAt']))
+        || !('weeklyTeachingHours' in batch)
+        || (batch.weeklyTeachingHours is int
+          && batch.weeklyTeachingHours >= 1 && batch.weeklyTeachingHours <= 60
+          && data.sessionIndex is int && data.sessionIndex >= 1
+          && data.sessionIndex <= batch.weeklyTeachingHours
+          && data.durationMinutes in [60, 120]);
+    }
+
     function validStudent(studentId, data) {
       return studentId is string
         && data.keys().hasOnly([
@@ -162,13 +174,6 @@ service cloud.firestore {
         && request.resource.data.updatedAt == request.time
         && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['isArchived'])
           || (isOwner() && request.resource.data.isArchived == true && resource.data.enrollmentStatus != 'ACTIVE'));
-      allow update: if isStudent() && request.auth.uid == studentId
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['updatedAt', 'updatedBy', 'course', 'courseDocId', 'courseId', 'batch', 'batchDocId', 'batchId', 'enrollmentStatus'])
-        && request.resource.data.studentId == resource.data.studentId
-        && request.resource.data.updatedAt == request.time && request.resource.data.updatedBy == request.auth.uid
-        && existsAfter(/databases/$(database)/documents/enrollments/$(studentId + '__' + request.resource.data.batchDocId))
-        && getAfter(/databases/$(database)/documents/enrollments/$(studentId + '__' + request.resource.data.batchDocId)).data.status == 'ACTIVE';
-
       allow delete: if false;
     }
 
@@ -181,23 +186,26 @@ service cloud.firestore {
     match /batches/{batchId} {
       allow get, list: if isStudentManager() || isStudent() || (isTrainer() && resource.data.teacherId == request.auth.uid);
       allow create, delete: if isOwner();
-      allow update: if isOwner() || ((isCounselor() || isStudent())
-        && (!isStudent() || (existsAfter(/databases/$(database)/documents/enrollments/$(request.resource.data.lastEnrollmentMutationId))
-          && getAfter(/databases/$(database)/documents/enrollments/$(request.resource.data.lastEnrollmentMutationId)).data.studentDocId == request.auth.uid))
+      allow update: if isOwner() || (isCounselor()
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          'enrolledCount', 'status', 'updatedAt', 'updatedBy', 'lastEnrollmentMutationId'
+          'enrolledCount', 'offlineEnrolledCount', 'status', 'updatedAt', 'updatedBy', 'lastEnrollmentMutationId'
         ])
         && request.resource.data.updatedAt == request.time
         && request.resource.data.updatedBy == request.auth.uid
         && request.resource.data.enrolledCount >= 0
-        && request.resource.data.enrolledCount <= resource.data.capacity
+        && request.resource.data.offlineEnrolledCount >= 0
+        && request.resource.data.offlineEnrolledCount <= (('offlineCapacity' in resource.data) ? resource.data.offlineCapacity : resource.data.capacity)
         && existsAfter(/databases/$(database)/documents/enrollments/$(request.resource.data.lastEnrollmentMutationId))
         && getAfter(/databases/$(database)/documents/enrollments/$(request.resource.data.lastEnrollmentMutationId)).data.batchDocId == batchId
         && ((request.resource.data.enrolledCount == resource.data.enrolledCount + 1
-              && getAfter(/databases/$(database)/documents/enrollments/$(request.resource.data.lastEnrollmentMutationId)).data.status == 'ACTIVE')
+              && getAfter(/databases/$(database)/documents/enrollments/$(request.resource.data.lastEnrollmentMutationId)).data.status == 'ACTIVE'
+              && request.resource.data.offlineEnrolledCount == (('offlineEnrolledCount' in resource.data) ? resource.data.offlineEnrolledCount : 0) + (getAfter(/databases/$(database)/documents/enrollments/$(request.resource.data.lastEnrollmentMutationId)).data.learningMode == 'OFFLINE' ? 1 : 0)
+              && (getAfter(/databases/$(database)/documents/enrollments/$(request.resource.data.lastEnrollmentMutationId)).data.learningMode != 'OFFLINE'
+                || (('offlineEnrolledCount' in resource.data) ? resource.data.offlineEnrolledCount : 0) < (('offlineCapacity' in resource.data) ? resource.data.offlineCapacity : resource.data.capacity)))
           || (request.resource.data.enrolledCount == resource.data.enrolledCount - 1
               && get(/databases/$(database)/documents/enrollments/$(request.resource.data.lastEnrollmentMutationId)).data.status == 'ACTIVE'
-              && getAfter(/databases/$(database)/documents/enrollments/$(request.resource.data.lastEnrollmentMutationId)).data.status in ['TRANSFERRED', 'WITHDRAWN'])));
+              && getAfter(/databases/$(database)/documents/enrollments/$(request.resource.data.lastEnrollmentMutationId)).data.status in ['TRANSFERRED', 'WITHDRAWN']
+              && request.resource.data.offlineEnrolledCount == (('offlineEnrolledCount' in resource.data) ? resource.data.offlineEnrolledCount : (get(/databases/$(database)/documents/enrollments/$(request.resource.data.lastEnrollmentMutationId)).data.learningMode == 'OFFLINE' ? resource.data.enrolledCount : 0)) - (get(/databases/$(database)/documents/enrollments/$(request.resource.data.lastEnrollmentMutationId)).data.learningMode == 'OFFLINE' ? 1 : 0)))));
     }
 
     match /enrollments/{enrollmentId} {
@@ -205,14 +213,26 @@ service cloud.firestore {
         || (isStudent() && (!exists(/databases/$(database)/documents/enrollments/$(enrollmentId)) || resource.data.studentDocId == request.auth.uid))
         || (isTrainer() && (!exists(/databases/$(database)/documents/enrollments/$(enrollmentId)) || resource.data.teacherId == request.auth.uid));
       allow list: if isStudentManager() || (isStudent() && resource.data.studentDocId == request.auth.uid) || (isTrainer() && resource.data.teacherId == request.auth.uid);
-      allow create: if (canManageEnrollment() || (isStudent() && request.resource.data.studentDocId == request.auth.uid && request.resource.data.enrolledBy == request.auth.uid))
+      allow create: if canManageEnrollment()
+        && request.resource.data.keys().hasOnly([
+          'studentDocId', 'studentId', 'courseDocId', 'courseId', 'courseName', 'batchDocId', 'batchId', 'batchName',
+          'studentName', 'studentEmail', 'studentPhone', 'status', 'learningMode', 'feeRecordId', 'teacherId',
+          'enrolledAt', 'enrolledBy', 'updatedAt', 'updatedBy'
+        ])
         && enrollmentId == request.resource.data.studentDocId + '__' + request.resource.data.batchDocId
         && request.resource.data.status == 'ACTIVE'
+        && request.resource.data.enrolledBy == request.auth.uid
         && existsAfter(/databases/$(database)/documents/students/$(request.resource.data.studentDocId))
         && exists(/databases/$(database)/documents/courses/$(request.resource.data.courseDocId))
         && exists(/databases/$(database)/documents/batches/$(request.resource.data.batchDocId))
         && get(/databases/$(database)/documents/batches/$(request.resource.data.batchDocId)).data.courseDocId == request.resource.data.courseDocId
-        && get(/databases/$(database)/documents/batches/$(request.resource.data.batchDocId)).data.enrolledCount < get(/databases/$(database)/documents/batches/$(request.resource.data.batchDocId)).data.capacity
+        && (request.resource.data.learningMode == 'ONLINE'
+          || ((('offlineEnrolledCount' in get(/databases/$(database)/documents/batches/$(request.resource.data.batchDocId)).data)
+                ? get(/databases/$(database)/documents/batches/$(request.resource.data.batchDocId)).data.offlineEnrolledCount
+                : get(/databases/$(database)/documents/batches/$(request.resource.data.batchDocId)).data.enrolledCount)
+            < (('offlineCapacity' in get(/databases/$(database)/documents/batches/$(request.resource.data.batchDocId)).data)
+              ? get(/databases/$(database)/documents/batches/$(request.resource.data.batchDocId)).data.offlineCapacity
+              : get(/databases/$(database)/documents/batches/$(request.resource.data.batchDocId)).data.capacity))
         && getAfter(/databases/$(database)/documents/batches/$(request.resource.data.batchDocId)).data.enrolledCount
           == get(/databases/$(database)/documents/batches/$(request.resource.data.batchDocId)).data.enrolledCount + 1
         && getAfter(/databases/$(database)/documents/students/$(request.resource.data.studentDocId)).data.studentId == request.resource.data.studentId
@@ -229,6 +249,14 @@ service cloud.firestore {
         && request.resource.data.updatedBy == request.auth.uid
         && request.resource.data.teacherId == get(/databases/$(database)/documents/batches/$(request.resource.data.batchDocId)).data.teacherId
         && get(/databases/$(database)/documents/courses/$(request.resource.data.courseDocId)).data.status == 'ACTIVE'
+        && existsAfter(/databases/$(database)/documents/feeRecords/$(request.resource.data.feeRecordId))
+        && getAfter(/databases/$(database)/documents/feeRecords/$(request.resource.data.feeRecordId)).data.enrollmentId == enrollmentId
+        && getAfter(/databases/$(database)/documents/feeRecords/$(request.resource.data.feeRecordId)).data.studentDocId == request.resource.data.studentDocId
+        && getAfter(/databases/$(database)/documents/feeRecords/$(request.resource.data.feeRecordId)).data.amountPaid * 2 >= getAfter(/databases/$(database)/documents/feeRecords/$(request.resource.data.feeRecordId)).data.totalFee
+        && (getAfter(/databases/$(database)/documents/feeRecords/$(request.resource.data.feeRecordId)).data.totalFee == 0
+          || (getAfter(/databases/$(database)/documents/feeRecords/$(request.resource.data.feeRecordId)).data.lastPaymentId is string
+            && existsAfter(/databases/$(database)/documents/payments/$(getAfter(/databases/$(database)/documents/feeRecords/$(request.resource.data.feeRecordId)).data.lastPaymentId))
+            && getAfter(/databases/$(database)/documents/payments/$(getAfter(/databases/$(database)/documents/feeRecords/$(request.resource.data.feeRecordId)).data.lastPaymentId)).data.status == 'VERIFIED'))
         && request.resource.data.updatedAt == request.time;
       allow update: if canManageEnrollment()
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
@@ -240,31 +268,19 @@ service cloud.firestore {
         && ((resource.data.status == 'ACTIVE' && request.resource.data.status in ['TRANSFERRED', 'WITHDRAWN'])
           || (resource.data.status in ['TRANSFERRED', 'WITHDRAWN'] && request.resource.data.status == 'ACTIVE')
           || (resource.data.status == 'ACTIVE' && request.resource.data.status == 'ACTIVE'));
-      allow update: if isStudent() && resource.data.studentDocId == request.auth.uid
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'learningMode', 'updatedAt', 'updatedBy'])
-        && ((resource.data.status in ['WITHDRAWN', 'TRANSFERRED'] && request.resource.data.status == 'ACTIVE')
-          || (resource.data.status == 'ACTIVE' && request.resource.data.status == 'ACTIVE'))
-        && request.resource.data.learningMode in ['ONLINE', 'OFFLINE']
-        && request.resource.data.updatedBy == request.auth.uid && request.resource.data.updatedAt == request.time
-        && (('learningModes' in get(/databases/$(database)/documents/batches/$(resource.data.batchDocId)).data
-              && request.resource.data.learningMode in get(/databases/$(database)/documents/batches/$(resource.data.batchDocId)).data.learningModes)
-          || (!('learningModes' in get(/databases/$(database)/documents/batches/$(resource.data.batchDocId)).data)
-              && request.resource.data.learningMode == 'OFFLINE'));
       allow delete: if false;
     }
 
     match /enrollmentHistory/{historyId} {
       allow get, list: if isStudentManager() || (isStudent() && resource.data.studentDocId == request.auth.uid);
       allow create: if canManageEnrollment()
+        && request.resource.data.keys().hasOnly([
+          'enrollmentId', 'studentDocId', 'studentId', 'studentName', 'courseName', 'courseDocId', 'batchId', 'batchName',
+          'batchDocId', 'learningMode', 'enrolledAt', 'totalFee', 'amountPaid', 'remainingBalance', 'paymentStatus',
+          'advancePaid', 'lastPaymentId', 'createdAt', 'updatedAt', 'action', 'actorUid', 'paymentId',
+          'previousBatchDocId', 'newBatchDocId'
+        ])
         && request.resource.data.actorUid == request.auth.uid
-        && request.resource.data.createdAt == request.time;
-      allow create: if isStudent() && request.resource.data.actorUid == request.auth.uid
-        && request.resource.data.studentDocId == request.auth.uid
-        && ((request.resource.data.action == 'MODE_CHANGED'
-              && getAfter(/databases/$(database)/documents/enrollments/$(request.auth.uid + '__' + request.resource.data.batchDocId)).data.learningMode == request.resource.data.learningMode)
-          || (request.resource.data.action == 'ENROLLED'
-              && getAfter(/databases/$(database)/documents/enrollments/$(request.auth.uid + '__' + request.resource.data.batchDocId)).data.status == 'ACTIVE'
-              && getAfter(/databases/$(database)/documents/enrollments/$(request.auth.uid + '__' + request.resource.data.batchDocId)).data.studentId == request.resource.data.studentId))
         && request.resource.data.createdAt == request.time;
       allow update, delete: if false;
     }
@@ -314,13 +330,21 @@ service cloud.firestore {
       allow get: if isStudentManager() || isAccounts()
         || (isStudent() && (!exists(/databases/$(database)/documents/feeRecords/$(feeId)) || resource.data.studentDocId == request.auth.uid));
       allow list: if isStudentManager() || isAccounts() || (isStudent() && resource.data.studentDocId == request.auth.uid);
-      allow create: if ((isStudent() && request.resource.data.studentDocId == request.auth.uid) || isStudentManager())
-        && request.resource.data.amountPaid == 0
-        && request.resource.data.remainingBalance == request.resource.data.totalFee
-        && request.resource.data.paymentStatus in ['UNPAID', 'PAID']
+      allow create: if canManageEnrollment()
         && existsAfter(/databases/$(database)/documents/enrollments/$(request.resource.data.enrollmentId))
         && getAfter(/databases/$(database)/documents/enrollments/$(request.resource.data.enrollmentId)).data.studentDocId == request.resource.data.studentDocId
         && getAfter(/databases/$(database)/documents/enrollments/$(request.resource.data.enrollmentId)).data.feeRecordId == feeId
+        && request.resource.data.totalFee >= 0
+        && request.resource.data.amountPaid >= 0 && request.resource.data.amountPaid <= request.resource.data.totalFee
+        && request.resource.data.remainingBalance == request.resource.data.totalFee - request.resource.data.amountPaid
+        && request.resource.data.paymentStatus == (request.resource.data.remainingBalance == 0 ? 'PAID' : 'PARTIALLY_PAID')
+        && ((request.resource.data.totalFee == 0 && request.resource.data.amountPaid == 0)
+          || (request.resource.data.amountPaid > 0 && request.resource.data.amountPaid * 2 >= request.resource.data.totalFee
+            && request.resource.data.lastPaymentId is string
+            && existsAfter(/databases/$(database)/documents/payments/$(request.resource.data.lastPaymentId))
+            && getAfter(/databases/$(database)/documents/payments/$(request.resource.data.lastPaymentId)).data.feeRecordId == feeId
+            && getAfter(/databases/$(database)/documents/payments/$(request.resource.data.lastPaymentId)).data.amount == request.resource.data.amountPaid
+            && getAfter(/databases/$(database)/documents/payments/$(request.resource.data.lastPaymentId)).data.status == 'VERIFIED'))
         && ((('price' in get(/databases/$(database)/documents/batches/$(request.resource.data.batchDocId)).data)
               && request.resource.data.totalFee == get(/databases/$(database)/documents/batches/$(request.resource.data.batchDocId)).data.price)
           || (!('price' in get(/databases/$(database)/documents/batches/$(request.resource.data.batchDocId)).data)
@@ -339,70 +363,83 @@ service cloud.firestore {
     match /payments/{paymentId} {
       allow get, list: if isStudentManager() || isAccounts() || (isStudent() && resource.data.studentDocId == request.auth.uid);
       allow create: if (isOwner() || isCounselor() || isAccounts())
+        && request.resource.data.keys().hasOnly([
+          'feeRecordId', 'enrollmentId', 'studentDocId', 'studentId', 'batchDocId', 'amount', 'remainingBalance',
+          'method', 'purpose', 'status', 'isDemo', 'reference', 'recordedBy', 'createdAt'
+        ])
         && request.resource.data.status == 'VERIFIED'
         && request.resource.data.method == 'MANUAL'
+        && request.resource.data.isDemo == false
+        && request.resource.data.purpose in ['ADVANCE', 'TUITION']
         && request.resource.data.recordedBy == request.auth.uid
         && request.resource.data.amount is number && request.resource.data.amount > 0
-        && request.resource.data.studentDocId == get(/databases/$(database)/documents/feeRecords/$(request.resource.data.feeRecordId)).data.studentDocId
-        && request.resource.data.enrollmentId == get(/databases/$(database)/documents/feeRecords/$(request.resource.data.feeRecordId)).data.enrollmentId
-        && request.resource.data.amount <= get(/databases/$(database)/documents/feeRecords/$(request.resource.data.feeRecordId)).data.remainingBalance
-        && getAfter(/databases/$(database)/documents/feeRecords/$(request.resource.data.feeRecordId)).data.amountPaid
-          == get(/databases/$(database)/documents/feeRecords/$(request.resource.data.feeRecordId)).data.amountPaid + request.resource.data.amount;
+        && request.resource.data.createdAt == request.time
+        && (request.resource.data.reference == null || (request.resource.data.reference is string && request.resource.data.reference.size() <= 120))
+        && request.resource.data.studentDocId == getAfter(/databases/$(database)/documents/feeRecords/$(request.resource.data.feeRecordId)).data.studentDocId
+        && request.resource.data.enrollmentId == getAfter(/databases/$(database)/documents/feeRecords/$(request.resource.data.feeRecordId)).data.enrollmentId
+        && request.resource.data.amount <= getAfter(/databases/$(database)/documents/feeRecords/$(request.resource.data.feeRecordId)).data.totalFee
+        && getAfter(/databases/$(database)/documents/feeRecords/$(request.resource.data.feeRecordId)).data.lastPaymentId == paymentId
+        && request.resource.data.remainingBalance == getAfter(/databases/$(database)/documents/feeRecords/$(request.resource.data.feeRecordId)).data.remainingBalance
+        && ((exists(/databases/$(database)/documents/feeRecords/$(request.resource.data.feeRecordId))
+              && request.resource.data.amount <= get(/databases/$(database)/documents/feeRecords/$(request.resource.data.feeRecordId)).data.remainingBalance
+              && getAfter(/databases/$(database)/documents/feeRecords/$(request.resource.data.feeRecordId)).data.amountPaid
+                == get(/databases/$(database)/documents/feeRecords/$(request.resource.data.feeRecordId)).data.amountPaid + request.resource.data.amount)
+          || (!exists(/databases/$(database)/documents/feeRecords/$(request.resource.data.feeRecordId))
+              && getAfter(/databases/$(database)/documents/feeRecords/$(request.resource.data.feeRecordId)).data.amountPaid == request.resource.data.amount));
       allow update, delete: if false;
     }
 
+    // Legacy payment PIN records remain inaccessible; current payment confirmation uses Firebase Authentication reauthentication.
+    match /demoPaymentPins/{studentUid} {
+      allow read, write: if false;
+    }
+
     match /attendanceSessions/{sessionId} {
-      allow get, list: if isStudentManager() || (isTrainer() && resource.data.teacherId == request.auth.uid)
-        || (isStudent() && exists(/databases/$(database)/documents/enrollments/$(request.auth.uid + '__' + resource.data.batchDocId)));
-      allow create: if (isOwner() || isTrainer()) && request.resource.data.createdBy == request.auth.uid
-        && request.resource.data.status == 'OPEN'
-        && request.resource.data.sessionAt is timestamp
-        && request.resource.data.sessionAt <= request.time
-        && (isOwner() || request.resource.data.teacherId == request.auth.uid)
-        && get(/databases/$(database)/documents/batches/$(request.resource.data.batchDocId)).data.teacherId == request.resource.data.teacherId;
-      allow update: if (isOwner() || (isTrainer() && resource.data.teacherId == request.auth.uid))
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status'])
-        && request.resource.data.status in ['OPEN', 'CANCELLED', 'COMPLETED'];
-      allow delete: if false;
+      allow get, list: if isStudentManager()
+        || (isTrainer() && resource.data.teacherId == request.auth.uid)
+        || (isStudent() && resource.data.status in ['OPEN', 'COMPLETED', 'CANCELLED']
+          && exists(/databases/$(database)/documents/enrollments/$(request.auth.uid + '__' + resource.data.batchDocId))
+          && get(/databases/$(database)/documents/enrollments/$(request.auth.uid + '__' + resource.data.batchDocId)).data.studentDocId == request.auth.uid);
+      // Attendance occurrence creation and all status changes are validated by
+      // the authenticated Admin SDK attendance API against the published timetable.
+      allow create, update, delete: if false;
     }
 
     match /attendanceRecords/{recordId} {
       allow get: if isStudentManager()
-        || (isStudent() && (!exists(/databases/$(database)/documents/attendanceRecords/$(recordId)) || resource.data.studentDocId == request.auth.uid))
-        || (isTrainer() && (!exists(/databases/$(database)/documents/attendanceRecords/$(recordId)) || resource.data.teacherId == request.auth.uid));
+        || (isStudent() && resource.data.studentDocId == request.auth.uid)
+        || (isTrainer() && resource.data.teacherId == request.auth.uid);
       allow list: if isStudentManager() || (isStudent() && resource.data.studentDocId == request.auth.uid)
         || (isTrainer() && resource.data.teacherId == request.auth.uid);
-      allow create, update: if (isOwner() || (isTrainer() && request.resource.data.teacherId == request.auth.uid))
-        && request.resource.data.status in ['PRESENT', 'ABSENT', 'LATE', 'EXCUSED']
-        && request.resource.data.recordedBy == request.auth.uid
-        && get(/databases/$(database)/documents/attendanceSessions/$(request.resource.data.sessionId)).data.status == 'OPEN'
-        && get(/databases/$(database)/documents/attendanceSessions/$(request.resource.data.sessionId)).data.sessionAt <= request.time
-        && get(/databases/$(database)/documents/attendanceSessions/$(request.resource.data.sessionId)).data.batchDocId == request.resource.data.batchDocId
-        && get(/databases/$(database)/documents/enrollments/$(request.resource.data.enrollmentId)).data.studentDocId == request.resource.data.studentDocId
-        && get(/databases/$(database)/documents/enrollments/$(request.resource.data.enrollmentId)).data.learningMode == request.resource.data.learningMode
-        && (isOwner() || get(/databases/$(database)/documents/attendanceSessions/$(request.resource.data.sessionId)).data.teacherId == request.auth.uid)
-        && (isOwner() || get(/databases/$(database)/documents/enrollments/$(request.resource.data.enrollmentId)).data.teacherId == request.auth.uid);
-      allow delete: if false;
+      // Direct client writes are prohibited; trusted API validates role, session,
+      // enrollment eligibility, deterministic record IDs and audit metadata.
+      allow create, update, delete: if false;
     }
 
     match /timetableSettings/{settingsId} {
-      allow get, list: if isOwner() || isTrainer();
+      allow get, list: if isOwner() || isTrainer() || isStudent();
       allow create, update: if isOwner() && settingsId == 'main'
-        && request.resource.data.keys().hasOnly(['workingDays', 'openTime', 'closeTime', 'slotIncrement', 'breaks', 'rooms', 'updatedAt'])
+        && request.resource.data.keys().hasOnly(['workingDays', 'openTime', 'closeTime', 'slotIncrement', 'breaks', 'rooms', 'holidays', 'timeZone', 'updatedAt'])
         && request.resource.data.workingDays is list && request.resource.data.workingDays.size() <= 7
         && request.resource.data.rooms is list && request.resource.data.rooms.size() <= 100
         && request.resource.data.breaks is list && request.resource.data.breaks.size() <= 30
+        && (!('holidays' in request.resource.data) || (request.resource.data.holidays is list && request.resource.data.holidays.size() <= 366))
         && request.resource.data.slotIncrement in [15, 30, 60]
         && request.resource.data.openTime is string && request.resource.data.closeTime is string
+        && (!('timeZone' in request.resource.data) || (request.resource.data.timeZone is string && request.resource.data.timeZone.size() <= 80))
         && request.resource.data.updatedAt == request.time;
       allow delete: if false;
     }
 
     match /timetableSessions/{sessionId} {
-      allow get, list: if isOwner() || (isTrainer() && resource.data.teacherId == request.auth.uid)
+      allow get: if isOwner() || isTrainer()
         || (isStudent() && exists(/databases/$(database)/documents/enrollments/$(request.auth.uid + '__' + resource.data.batchDocId))
           && get(/databases/$(database)/documents/enrollments/$(request.auth.uid + '__' + resource.data.batchDocId)).data.status == 'ACTIVE'
           && resource.data.status == 'PUBLISHED');
+      allow list: if isOwner() || isTrainer()
+        || (isStudent() && resource.data.status == 'PUBLISHED'
+          && exists(/databases/$(database)/documents/enrollments/$(request.auth.uid + '__' + resource.data.batchDocId))
+          && get(/databases/$(database)/documents/enrollments/$(request.auth.uid + '__' + resource.data.batchDocId)).data.status == 'ACTIVE');
       allow create: if isOwner()
         && request.resource.data.batchDocId is string
         && exists(/databases/$(database)/documents/batches/$(request.resource.data.batchDocId))
@@ -419,16 +456,19 @@ service cloud.firestore {
         && request.resource.data.source in ['GENERATED', 'MANUAL']
         && request.resource.data.status in ['DRAFT', 'PUBLISHED']
         && exists(/databases/$(database)/documents/timetableSettings/main)
-        && request.resource.data.day in get(/databases/$(database)/documents/timetableSettings/main).data.workingDays;
+        && request.resource.data.day in get(/databases/$(database)/documents/timetableSettings/main).data.workingDays
+        && validWeeklySessionDuration(request.resource.data.batchDocId, request.resource.data, false)
+        && request.resource.data.needsReview != true;
       allow update: if isOwner()
         && request.resource.data.batchDocId == resource.data.batchDocId
-        && request.resource.data.durationMinutes == resource.data.durationMinutes
         && request.resource.data.endMinutes - request.resource.data.startMinutes == request.resource.data.durationMinutes
         && request.resource.data.teacherId is string
         && exists(/databases/$(database)/documents/users/$(request.resource.data.teacherId))
         && get(/databases/$(database)/documents/users/$(request.resource.data.teacherId)).data.role == 'TRAINER'
         && get(/databases/$(database)/documents/users/$(request.resource.data.teacherId)).data.status == 'APPROVED'
         && request.resource.data.day in get(/databases/$(database)/documents/timetableSettings/main).data.workingDays
+        && validWeeklySessionDuration(request.resource.data.batchDocId, request.resource.data, true)
+        && (request.resource.data.needsReview != true || request.resource.data.status == resource.data.status)
         && request.resource.data.status in ['DRAFT', 'PUBLISHED'];
       allow delete: if isOwner() && resource.data.status != 'PUBLISHED';
     }

@@ -3,6 +3,8 @@ const express = require('express');
 const cors = require('cors');
 const initializeFirebase = require('./config/firebase');
 const createTestRoutes = require('./routes/testRoutes');
+const createEnrollmentRoutes = require('./routes/enrollmentRoutes');
+const createAttendanceRoutes = require('./routes/attendanceRoutes');
 
 const app = express();
 const allowedOrigins = (process.env.FRONTEND_URL || 'http://localhost:3000').split(',').map((origin) => origin.trim());
@@ -35,8 +37,10 @@ try {
 if (process.env.NODE_ENV !== 'production' && process.env.ENABLE_FIRESTORE_TEST_ENDPOINTS === 'true') {
   app.use('/api/firestore-test', createTestRoutes(firebase.db));
 }
+app.use('/api/enrollment', createEnrollmentRoutes(firebase));
+app.use('/api/attendance', createAttendanceRoutes(firebase));
 app.use((error, _req, res, _next) => {
-  return res.status(error.status || 400).json({ message: error.message || 'Invalid request.' });
+  return res.status(error.status || 400).json({ code: error.code || 'REQUEST_FAILED', message: error.message || 'Invalid request.' });
 });
 
 const port = Number(process.env.PORT) || 5000;

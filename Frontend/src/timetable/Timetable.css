@@ -706,6 +706,501 @@
   margin-bottom: 14px;
 }
 
+/* Date-aware timetable grid and role-specific views. */
+.tt-view-tabs,
+.tt-weeknav,
+.tt-weeknav > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tt-view-tabs {
+  margin: 0 0 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--tt-border);
+}
+
+.tt-view-tabs button,
+.tt-student-batch {
+  padding: 9px 13px;
+  color: var(--tt-text-soft);
+  background: var(--tt-card);
+  border: 1px solid var(--tt-border);
+  border-radius: var(--tt-radius-sm);
+  cursor: pointer;
+}
+
+.tt-view-tabs button.is-active,
+.tt-student-batch.is-active {
+  color: var(--tt-primary-dark);
+  background: var(--tt-light);
+  border-color: var(--tt-secondary);
+}
+
+.tt-view-filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.tt-view-filters label {
+  display: grid;
+  gap: 4px;
+  color: var(--tt-text-soft);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.tt-view-filters select {
+  width: 100%;
+  min-width: 0;
+  padding: 8px 10px;
+  background: var(--tt-bg);
+  border: 1px solid var(--tt-border);
+  border-radius: var(--tt-radius-sm);
+}
+
+.tt-student-batches {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.tt-student-batch {
+  display: grid;
+  gap: 3px;
+  text-align: left;
+}
+
+.tt-student-batch span,
+.tt-student-batch small {
+  color: var(--tt-text-soft);
+  font-size: 11.5px;
+}
+
+.tt-student-batch strong {
+  color: var(--tt-heading);
+}
+
+.tt-weeknav {
+  justify-content: space-between;
+  margin: 12px 0;
+}
+
+.tt-weeknav > strong {
+  color: var(--tt-heading);
+  font-size: 13px;
+}
+
+.tt-grid-scroll {
+  overflow-x: auto;
+  border: 1px solid var(--tt-border);
+  border-radius: var(--tt-radius-sm);
+}
+
+.tt-weekgrid {
+  width: 100%;
+  min-width: 900px;
+  table-layout: fixed;
+  border-collapse: collapse;
+}
+
+.tt-weekgrid th,
+.tt-weekgrid td {
+  padding: 4px;
+  border-right: 1px solid var(--tt-border);
+  border-bottom: 1px solid var(--tt-border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.tt-weekgrid thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  height: 46px;
+  color: var(--tt-heading);
+  background: var(--tt-bg);
+  font-size: 12px;
+}
+
+.tt-weekgrid thead th small,
+.tt-weekgrid__time small {
+  display: block;
+  margin-top: 2px;
+  color: var(--tt-text-soft);
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.tt-weekgrid__time {
+  width: 76px;
+  color: var(--tt-text-soft);
+  background: #fcfaf7;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.tt-weekgrid tbody tr {
+  height: 34px;
+}
+
+.tt-weekgrid__empty {
+  background: #fff;
+}
+
+.tt-weekgrid__closed {
+  color: #a59a91;
+  background: #f0ece7;
+  font-size: 10px;
+  text-align: center !important;
+}
+
+.tt-weekgrid__break {
+  color: var(--tt-warn);
+  background: var(--tt-warn-bg);
+  font-size: 11px;
+}
+
+.tt-weekgrid__event {
+  min-width: 108px;
+  padding: 5px !important;
+  background: var(--tt-good-bg);
+}
+
+.tt-weekgrid__event.has-conflict {
+  background: var(--tt-bad-bg);
+}
+
+.tt-weekgrid__event article {
+  display: grid;
+  gap: 2px;
+  font-size: 10px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.tt-weekgrid__event strong {
+  color: var(--tt-heading);
+  font-size: 11px;
+}
+
+.tt-weekgrid__event span,
+.tt-weekgrid__event small {
+  color: var(--tt-text-soft);
+}
+
+.tt-weekgrid__event em {
+  color: var(--tt-good);
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.tt-weekgrid__events {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.tt-weekgrid__events .tt-slot {
+  min-width: 0;
+  margin: 0;
+  padding: 6px;
+}
+
+.tt-weekgrid__events .tt-slot__actions {
+  flex-wrap: wrap;
+}
+
+.tt-day-calendars {
+  display: grid;
+  gap: 14px;
+}
+
+.tt-day-calendar {
+  min-width: 0;
+  padding: 12px;
+  background: var(--tt-bg);
+  border: 1px solid var(--tt-border);
+  border-radius: var(--tt-radius-sm);
+}
+
+.tt-day-calendar__title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 10px;
+  color: var(--tt-heading);
+}
+
+.tt-day-calendar__title span {
+  color: var(--tt-text-soft);
+  font-size: 12px;
+}
+
+.tt-day-calendar__title b {
+  color: var(--tt-warn);
+  font-size: 12px;
+}
+
+.tt-day-calendar__scroll {
+  overflow-x: auto;
+  border: 1px solid var(--tt-border);
+  border-radius: 8px;
+  background: var(--tt-card);
+}
+
+.tt-day-calendar__canvas {
+  width: 100%;
+}
+
+.tt-day-calendar__head,
+.tt-day-calendar__body {
+  display: grid;
+  grid-template-columns: 86px repeat(var(--tt-room-count, 1), minmax(194px, 1fr));
+}
+
+.tt-day-calendar__head {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  border-bottom: 1px solid var(--tt-border);
+  background: var(--tt-bg);
+}
+
+.tt-day-calendar__head > div {
+  min-width: 0;
+  padding: 9px 10px;
+  border-right: 1px solid var(--tt-border);
+  color: var(--tt-heading);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.tt-day-calendar__head small {
+  display: block;
+  color: var(--tt-text-soft);
+  font-size: 10.5px;
+  font-weight: 500;
+}
+
+.tt-day-calendar__body {
+  position: relative;
+  min-height: 120px;
+  background: var(--tt-card);
+}
+
+.tt-day-calendar__axis {
+  position: relative;
+  z-index: 2;
+  border-right: 1px solid var(--tt-border);
+  background: var(--tt-bg);
+}
+
+.tt-day-calendar__axis span {
+  position: absolute;
+  left: 5px;
+  padding: 0 3px;
+  color: var(--tt-text-soft);
+  background: var(--tt-bg);
+  font-size: 10px;
+  line-height: 1;
+  transform: translateY(-50%);
+}
+
+.tt-day-calendar__lane {
+  position: relative;
+  min-width: 0;
+  border-right: 1px solid var(--tt-border);
+  background-image: repeating-linear-gradient(to bottom, transparent 0, transparent 59px, var(--tt-border) 59px, var(--tt-border) 60px);
+}
+
+.tt-day-calendar__break {
+  position: absolute;
+  z-index: 1;
+  right: 0;
+  left: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  color: var(--tt-warn);
+  background: repeating-linear-gradient(135deg, #fbf1de, #fbf1de 8px, #f7e9ce 8px, #f7e9ce 16px);
+  border-block: 1px solid var(--tt-warn-border);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.tt-day-calendar__session {
+  position: absolute;
+  z-index: 3;
+  right: 4px;
+  left: 4px;
+  min-height: 0;
+}
+
+.tt-day-calendar__session > .tt-slot {
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  margin: 0;
+  padding: 4px 5px;
+  gap: 1px;
+  overflow: auto;
+  border-radius: 6px;
+  font-size: 10px;
+  line-height: 1.15;
+}
+
+.tt-day-calendar__session .tt-slot__top {
+  align-items: center;
+}
+
+.tt-day-calendar__session .tt-slot__name,
+.tt-day-calendar__session .tt-slot__course {
+  font-size: 10.5px;
+  line-height: 1.15;
+}
+
+.tt-day-calendar__session .tt-slot__time,
+.tt-day-calendar__session .tt-slot__teacher,
+.tt-day-calendar__session .tt-slot__mode {
+  display: block;
+  overflow-wrap: anywhere;
+  font-size: 9.5px;
+  line-height: 1.15;
+}
+
+.tt-day-calendar__session .tt-pill {
+  align-self: flex-start;
+  padding: 1px 5px;
+  font-size: 8.5px;
+}
+
+.tt-day-calendar__holiday {
+  padding: 10px;
+  color: var(--tt-warn);
+  background: var(--tt-warn-bg);
+  text-align: center;
+}
+
+.tt-roomview {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+  gap: 12px;
+}
+
+.tt-roomcard,
+.tt-trainer-card {
+  min-width: 0;
+  padding: 14px;
+  background: var(--tt-bg);
+  border: 1px solid var(--tt-border);
+  border-radius: var(--tt-radius-sm);
+}
+
+.tt-roomcard > header,
+.tt-trainer-card > header {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 12px;
+  color: var(--tt-primary);
+}
+
+.tt-roomcard > header div {
+  display: grid;
+  color: var(--tt-heading);
+}
+
+.tt-roomcard > header small {
+  color: var(--tt-text-soft);
+  font-size: 11px;
+}
+
+.tt-roomcard__days {
+  display: grid;
+  gap: 8px;
+}
+
+.tt-roomcard__days section {
+  min-width: 0;
+  padding: 9px;
+  background: var(--tt-card);
+  border: 1px solid var(--tt-border);
+  border-radius: 8px;
+}
+
+.tt-roomcard__days h3 {
+  margin: 0 0 7px;
+  color: var(--tt-heading);
+  font-size: 12px;
+}
+
+.tt-roomcard__days h3 small {
+  color: var(--tt-text-soft);
+  font-weight: 500;
+}
+
+.tt-trainer-card > header {
+  flex-wrap: wrap;
+  justify-content: space-between;
+  color: var(--tt-heading);
+}
+
+.tt-trainer-card > .tt-slot {
+  margin-bottom: 7px;
+}
+
+.tt-holidays__list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 10px;
+}
+
+.tt-weekgrid__edit {
+  width: fit-content;
+  padding: 2px 6px;
+  color: var(--tt-primary);
+  background: transparent;
+  border: 1px solid var(--tt-border);
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.tt-week-empty {
+  margin: 0 0 12px;
+  padding: 12px;
+  color: var(--tt-text-soft);
+  background: var(--tt-bg);
+  border-radius: var(--tt-radius-sm);
+  text-align: center;
+}
+
+.tt-week-footnote {
+  margin-top: 10px;
+  color: var(--tt-text-soft);
+  font-size: 12px;
+}
+
+@media (max-width: 640px) {
+  .tt-weeknav {
+    align-items: flex-start;
+    flex-direction: column-reverse;
+  }
+
+  .tt-view-tabs button {
+    flex: 1;
+    padding-inline: 7px;
+  }
+}
+
 .tt-editor__hint {
   margin-top: 12px;
   color: var(--tt-text-soft);
@@ -1631,5 +2126,9 @@
 
   .tt-batchcard__time {
     grid-column: 1 / -1;
+  }
+
+  .tt-roomview {
+    grid-template-columns: 1fr;
   }
 }

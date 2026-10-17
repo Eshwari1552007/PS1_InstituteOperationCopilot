@@ -7,14 +7,42 @@ const normalizeDay = (day) => ({ MON: 'Mon', TUE: 'Tue', WED: 'Wed', THU: 'Thu',
 
 export async function loadTimetableWorkspace(profile) {
   const batchesRef = collection(db, 'batches');
+  const coursesRef = collection(db, 'courses');
   const batchesQuery = profile.role === 'TRAINER' ? query(batchesRef, where('teacherId', '==', profile.uid)) : batchesRef;
   const sessionRef = collection(db, 'timetableSessions');
-  const sessionsQuery = profile.role === 'TRAINER' ? query(sessionRef, where('teacherId', '==', profile.uid)) : sessionRef;
-  const [batchSnapshot, settingsSnapshot, sessionSnapshot, teacherSnapshot] = await Promise.all([
-    getDocs(batchesQuery), getDoc(doc(db, 'timetableSettings', SETTINGS_ID)), getDocs(sessionsQuery),
+  const sessionsQuery = profile.role === 'STUDENT' ? null : profile.role === 'TRAINER'
+    ? query(sessionRef, where('teacherId', '==', profile.uid)) : sessionRef;
+  const [batchSnapshot, settingsSnapshot, sessionSnapshot, teacherSnapshot, enrollmentSnapshot] = await Promise.all([
+    profile.role === 'STUDENT' ? Promise.resolve(null) : getDocs(batchesQuery),
+    getDoc(doc(db, 'timetableSettings', SETTINGS_ID)),
+    sessionsQuery ? getDocs(sessionsQuery) : Promise.resolve(null),
     profile.role === 'OWNER' ? getDocs(query(collection(db, 'users'), where('role', '==', 'TRAINER'))) : Promise.resolve(null),
+    profile.role === 'STUDENT' ? getDocs(query(collection(db, 'enrollments'), where('studentDocId', '==', profile.uid), where('status', '==', 'ACTIVE'))) : Promise.resolve(null),
   ]);
-  const batches = batchSnapshot.docs.map((item) => ({ documentId: item.id, ...item.data() }));
+  const courseSnapshot = profile.role === 'STUDENT' ? null : await getDocs(coursesRef);
+  const courses = courseSnapshot?.docs.map((item) => ({ documentId: item.id, ...item.data() })) || [];
+  const courseById = new Map(courses.flatMap((course) => [[course.documentId, course], ...(course.courseId ? [[course.courseId, course]] : [])]));
+  const teachers = teacherSnapshot?.docs.map((item) => ({ uid: item.id, ...item.data() })).filter((item) => item.status === 'APPROVED') || [];
+  const teacherById = new Map(teachers.map((teacher) => [teacher.uid, teacher]));
+  const enrollmentRecords = enrollmentSnapshot?.docs.map((item) => ({ documentId: item.id, ...item.data() })) || [];
+  const enrolledBatches = profile.role === 'STUDENT'
+    ? await Promise.all(enrollmentRecords.map(async (enrollment) => {
+      const snapshot = await getDoc(doc(db, 'batches', enrollment.batchDocId));
+      return snapshot.exists() ? { documentId: snapshot.id, ...snapshot.data() } : null;
+    }))
+    : [];
+  const batches = profile.role === 'STUDENT'
+    ? enrolledBatches.filter(Boolean)
+    : batchSnapshot.docs.map((item) => {
+      const batch = { documentId: item.id, ...item.data() };
+      const course = courseById.get(batch.courseDocId);
+      const teacher = teacherById.get(batch.teacherId);
+      return { ...batch, teacherName: batch.teacherName || teacher?.name || '', trainerAvailability: teacher?.availability || teacher?.teachingAvailability || null,
+        courseName: batch.courseName || course?.name || batch.course || '', courseArchived: Boolean(course?.isArchived), courseStatus: course?.status || (course ? '' : 'MISSING') };
+    });
+  const studentSessions = profile.role === 'STUDENT'
+    ? await Promise.all(enrollmentRecords.map((enrollment) => getDocs(query(sessionRef, where('batchDocId', '==', enrollment.batchDocId), where('status', '==', 'PUBLISHED')))))
+    : [];
   const knownRooms = [...new Set(batches.map((batch) => String(batch.roomNumber || '').trim()).filter(Boolean))];
   const fallbackRooms = knownRooms.map((name, index) => ({
     id: `legacy-room-${index + 1}`, name, type: /lab/i.test(name) ? 'Lab' : 'Classroom',
@@ -25,9 +53,11 @@ export async function loadTimetableWorkspace(profile) {
     : { ...DEFAULT_SETTINGS, rooms: fallbackRooms };
   return {
     batches,
+    courses,
     settings,
-    sessions: sessionSnapshot.docs.map((item) => ({ id: item.id, ...item.data(), day: normalizeDay(item.data().day) })),
-    teachers: teacherSnapshot?.docs.map((item) => ({ uid: item.id, ...item.data() })).filter((item) => item.status === 'APPROVED') || [],
+    sessions: (profile.role === 'STUDENT' ? studentSessions.flatMap((result) => result.docs) : sessionSnapshot.docs).map((item) => ({ id: item.id, ...item.data(), day: normalizeDay(item.data().day) })),
+    teachers,
+    enrollments: enrollmentRecords,
   };
 }
 
@@ -36,7 +66,7 @@ export async function persistTimetable(settings, sessions, previousSessions) {
   const staleDrafts = previousSessions.filter((session) => session.status !== 'PUBLISHED' && session.source === 'GENERATED' && !nextIds.has(session.id));
   await setDoc(doc(db, 'timetableSettings', SETTINGS_ID), { ...settings, updatedAt: serverTimestamp() }, { merge: true });
   const operations = [
-    ...sessions.map((session) => ({ kind: 'set', id: session.id, data: { ...session, updatedAt: serverTimestamp() } })),
+    ...sessions.map((session) => ({ kind: 'set', id: session.id, data: { ...session, needsReview: Boolean(session.needsReview), reviewReason: session.needsReview ? session.reviewReason || 'This timetable session needs Owner review.' : '', updatedAt: serverTimestamp() } })),
     ...staleDrafts.map((session) => ({ kind: 'delete', id: session.id })),
   ];
   for (let offset = 0; offset < operations.length; offset += 400) {

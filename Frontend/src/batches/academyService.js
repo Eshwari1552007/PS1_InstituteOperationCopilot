@@ -18,6 +18,24 @@ function serviceError(code, message) {
   return error;
 }
 
+function validateInitialPayment(amountInput, feeInput) {
+  const fee = Number(feeInput);
+  const amount = Number(amountInput || 0);
+  const feeMinor = Math.round(fee * 100);
+  const amountMinor = Math.round(amount * 100);
+  if (!Number.isFinite(fee) || fee < 0 || Math.abs(fee * 100 - feeMinor) > 1e-7) throw serviceError('enrollment/fee-invalid', 'The saved course fee is invalid. Ask the Owner to review it.');
+  if (feeMinor === 0 && amountMinor === 0) return { fee: 0, paid: 0, remaining: 0 };
+  if (!Number.isFinite(amount) || amount <= 0 || Math.abs(amount * 100 - amountMinor) > 1e-7) throw serviceError('enrollment/advance-invalid', 'Enter a valid positive amount with no more than two decimal places.');
+  if (amountMinor * 2 < feeMinor) throw serviceError('enrollment/advance-required', 'The initial payment must be at least 50% of the saved course fee.');
+  if (amountMinor > feeMinor) throw serviceError('enrollment/advance-excessive', 'The initial payment cannot exceed the course fee.');
+  return { fee: feeMinor / 100, paid: amountMinor / 100, remaining: (feeMinor - amountMinor) / 100 };
+}
+
+async function offlineEnrollmentCount(transaction, batchDocId) {
+  const snapshot = await transaction.get(query(collection(db, ENROLLMENTS), where('batchDocId', '==', batchDocId), where('status', '==', 'ACTIVE'), where('learningMode', '==', 'OFFLINE')));
+  return snapshot.size;
+}
+
 function explain(error) {
   if (error.code === 'permission-denied') return serviceError(error.code, 'Firestore denied this operation. Confirm the latest Firestore rules are deployed and your role is approved.');
   if (error.code === 'unavailable' || error.code === 'deadline-exceeded') return serviceError(error.code, 'Firebase is temporarily unavailable. Check your connection and retry.');
@@ -58,7 +76,9 @@ function dateKey(date) {
 export function batchStatus(batch, today = dateKey()) {
   if (batch.isClosed) return 'CLOSED';
   if (batch.endDate < today) return 'COMPLETED';
-  if (Number(batch.enrolledCount || 0) >= Number(batch.capacity || 0)) return 'FULL';
+  const modes = batch.learningModes || ['OFFLINE'];
+  const offlineCount = Number(batch.offlineEnrolledCount ?? batch.enrolledCount ?? 0);
+  if (modes.includes('OFFLINE') && offlineCount >= Number(batch.offlineCapacity || batch.capacity || 0) && !modes.includes('ONLINE')) return 'FULL';
   if (batch.startDate > today) return 'UPCOMING';
   return 'ACTIVE';
 }
@@ -82,16 +102,14 @@ export function validateCourse(input) {
 }
 
 export function validateBatch(input) {
-  const legacyStart = timeMinutes(input.startTime); const legacyEnd = timeMinutes(input.endTime);
-  const legacyDuration = Number.isFinite(legacyStart) && Number.isFinite(legacyEnd) && legacyEnd > legacyStart ? (legacyEnd - legacyStart) / 60 : NaN;
+  const legacyHours = Number(input.durationHours) * Number(input.sessionsPerWeek || (input.daysOfWeek || []).length || 1);
   const value = {
     name: String(input.name || '').trim(), courseDocId: String(input.courseDocId || '').trim(),
     teacherId: String(input.teacherId || '').trim(), roomNumber: String(input.roomNumber || '').trim(),
     startDate: String(input.startDate || '').trim(), endDate: String(input.endDate || '').trim(),
     daysOfWeek: [...new Set(input.daysOfWeek || [])], startTime: String(input.startTime || '').trim(),
     endTime: String(input.endTime || '').trim(), capacity: Number(input.capacity),
-    durationHours: Number(input.durationHours ?? legacyDuration),
-    sessionsPerWeek: Number(input.sessionsPerWeek ?? ((input.daysOfWeek || []).length || 1)),
+    weeklyTeachingHours: Number(input.weeklyTeachingHours ?? (Number.isInteger(legacyHours) ? legacyHours : NaN)),
     price: Number(input.price ?? input.fee ?? 0),
     learningModes: [...new Set(input.learningModes || ['OFFLINE'])],
     onlineClassDetails: String(input.onlineClassDetails || '').trim(),
@@ -102,10 +120,8 @@ export function validateBatch(input) {
   if (!value.courseDocId) errors.courseDocId = 'Select a course.';
   if (!value.teacherId) errors.teacherId = 'Select an approved Trainer.';
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value.startDate)) errors.startDate = 'Choose a start date.';
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value.endDate) || value.endDate <= value.startDate) errors.endDate = 'End date must be after the start date.';
-  if (!value.daysOfWeek.length || value.daysOfWeek.some((day) => !['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'].includes(day))) errors.daysOfWeek = 'Choose at least one valid class day.';
-  if (!Number.isFinite(value.durationHours) || value.durationHours < 0.25 || value.durationHours > 12 || Math.round(value.durationHours * 4) !== value.durationHours * 4) errors.durationHours = 'Enter a class duration from 0.25 to 12 hours in 15-minute increments.';
-  if (!Number.isInteger(value.sessionsPerWeek) || value.sessionsPerWeek < 1 || value.sessionsPerWeek > 7) errors.sessionsPerWeek = 'Choose 1 to 7 sessions per week.';
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value.endDate) || value.endDate < value.startDate) errors.endDate = 'End date must be on or after the start date.';
+  if (!Number.isInteger(value.weeklyTeachingHours) || value.weeklyTeachingHours < 1 || value.weeklyTeachingHours > 60) errors.weeklyTeachingHours = 'Enter a whole number of teaching hours from 1 to 60 per week.';
   const hasLegacyTime = Boolean(value.startTime || value.endTime);
   if (hasLegacyTime && (!Number.isFinite(timeMinutes(value.startTime)) || !Number.isFinite(timeMinutes(value.endTime)) || timeMinutes(value.endTime) <= timeMinutes(value.startTime))) errors.endTime = 'Existing preferred time must have an end after the start. Clear both legacy times or correct them.';
   if (!Number.isInteger(value.capacity) || value.capacity < 1 || value.capacity > 500) errors.capacity = 'Capacity must be a positive whole number (maximum 500).';
@@ -132,78 +148,6 @@ export async function loadAcademyWorkspace(role, uid) {
   } catch (error) {
     throw explain(error);
   }
-}
-
-export async function enrollSelf({ uid, batchDocId, learningMode }) {
-  const studentRef = doc(db, STUDENTS, uid);
-  const batchRef = doc(db, BATCHES, batchDocId);
-  const historyRef = doc(collection(db, HISTORY));
-  const enrollmentRef = doc(db, ENROLLMENTS, enrollmentId(uid, batchDocId));
-  const feeRef = doc(db, 'feeRecords', enrollmentRef.id);
-  try {
-    return await runTransaction(db, async (transaction) => {
-      const [studentSnap, batchSnap, enrollmentSnap, feeSnap] = await Promise.all([
-        transaction.get(studentRef), transaction.get(batchRef), transaction.get(enrollmentRef),
-        transaction.get(feeRef),
-      ]);
-      if (!studentSnap.exists() || !batchSnap.exists()) throw serviceError('enrollment/not-found', 'Student profile or batch was not found. Refresh and try again.');
-      const student = { documentId: uid, ...studentSnap.data() };
-      const batch = { documentId: batchDocId, ...batchSnap.data() };
-      if (!batch.isArchived && !batch.isClosed && !['INACTIVE', 'CLOSED', 'COMPLETED'].includes(batch.status)) {
-        if (batchStatus(batch) === 'COMPLETED') throw serviceError('enrollment/batch-unavailable', 'This batch has already completed.');
-      } else throw serviceError('enrollment/batch-unavailable', 'This batch is closed or archived.');
-      if (Number(batch.enrolledCount || 0) >= Number(batch.capacity || 0)) throw serviceError('enrollment/full', 'This batch has no seats available.');
-      if (!['ONLINE', 'OFFLINE'].includes(learningMode) || !(batch.learningModes || ['OFFLINE']).includes(learningMode)) throw serviceError('enrollment/mode-unavailable', 'That learning mode is not available for this batch.');
-      if (enrollmentSnap.exists() && enrollmentSnap.data().status === 'ACTIVE') throw serviceError('enrollment/duplicate', 'You are already enrolled in this batch.');
-      const courseSnap = await transaction.get(doc(db, COURSES, batch.courseDocId));
-      if (!courseSnap.exists() || courseSnap.data().status !== 'ACTIVE' || courseSnap.data().isArchived) throw serviceError('enrollment/course-unavailable', 'This course is no longer open.');
-      const course = { documentId: courseSnap.id, ...courseSnap.data() };
-      const now = serverTimestamp();
-      const fee = Number(batch.price ?? course.fee ?? 0);
-      const record = {
-        studentDocId: uid, studentId: student.studentId, studentName: student.fullName, studentEmail: student.email,
-        studentPhone: student.phone, courseDocId: course.documentId, courseId: course.courseId, courseName: course.name,
-        batchDocId, batchId: batch.batchId, batchName: batch.name, teacherId: batch.teacherId, learningMode, status: 'ACTIVE',
-        enrolledAt: enrollmentSnap.exists() ? enrollmentSnap.data().enrolledAt : now,
-        enrolledBy: enrollmentSnap.exists() ? enrollmentSnap.data().enrolledBy : uid,
-        updatedAt: now, updatedBy: uid, feeRecordId: feeRef.id,
-      };
-      if (enrollmentSnap.exists()) transaction.update(enrollmentRef, { status: 'ACTIVE', learningMode, updatedAt: now, updatedBy: uid });
-      else transaction.set(enrollmentRef, record);
-      if (!feeSnap.exists()) transaction.set(feeRef, {
-        enrollmentId: enrollmentRef.id, studentDocId: uid, studentId: student.studentId, studentName: student.fullName,
-        courseName: course.name, batchId: batch.batchId, courseDocId: course.documentId, batchDocId, totalFee: fee, amountPaid: 0, remainingBalance: fee,
-        paymentStatus: fee === 0 ? 'PAID' : 'UNPAID', createdAt: now, updatedAt: now,
-      });
-      transaction.set(batchRef, batchWithCount(batch, Number(batch.enrolledCount || 0) + 1, now, uid, enrollmentRef.id));
-      transaction.update(studentRef, { course: course.name, courseDocId: course.documentId, courseId: course.courseId,
-        batch: batch.name, batchDocId, batchId: batch.batchId, enrollmentStatus: 'ACTIVE', updatedAt: now, updatedBy: uid });
-      transaction.set(historyRef, { studentDocId: uid, studentId: student.studentId, courseDocId: course.documentId, batchDocId, action: 'ENROLLED', actorUid: uid, createdAt: now });
-      return { ...record, documentId: enrollmentRef.id, feeTotal: fee };
-    });
-  } catch (error) { throw explain(error); }
-}
-
-export async function changeEnrollmentMode({ uid, enrollmentId: id, learningMode }) {
-  const enrollmentRef = doc(db, ENROLLMENTS, id);
-  const historyRef = doc(collection(db, HISTORY));
-  try {
-    return await runTransaction(db, async (transaction) => {
-      const enrollmentSnap = await transaction.get(enrollmentRef);
-      if (!enrollmentSnap.exists() || enrollmentSnap.data().studentDocId !== uid || enrollmentSnap.data().status !== 'ACTIVE') throw serviceError('enrollment/not-active', 'This active enrollment was not found.');
-      const enrollment = enrollmentSnap.data();
-      const batchSnap = await transaction.get(doc(db, BATCHES, enrollment.batchDocId));
-      if (!batchSnap.exists()) throw serviceError('enrollment/batch-unavailable', 'The batch no longer exists.');
-      const supportedModes = batchSnap.data().learningModes || ['OFFLINE'];
-      if (!supportedModes.includes(learningMode)) throw serviceError('enrollment/mode-unavailable', 'That mode is not supported by the batch.');
-      if (enrollment.learningMode === learningMode) return enrollment;
-      const now = serverTimestamp();
-      transaction.update(enrollmentRef, { learningMode, updatedAt: now, updatedBy: uid });
-      transaction.set(historyRef, { studentDocId: uid, studentId: enrollment.studentId, batchDocId: enrollment.batchDocId,
-        action: 'MODE_CHANGED', previousMode: enrollment.learningMode || 'OFFLINE', learningMode, actorUid: uid, createdAt: now });
-      return { ...enrollment, learningMode };
-    });
-  } catch (error) { throw explain(error); }
 }
 
 export async function getEnrollmentOptions() {
@@ -239,6 +183,7 @@ export async function saveCourse(input, actorUid, existingId = '') {
 }
 
 function lockKeys(batch) {
+  if (Number.isInteger(Number(batch.weeklyTeachingHours)) && Number(batch.weeklyTeachingHours) > 0) return [];
   if (!Number.isFinite(timeMinutes(batch.startTime)) || !Number.isFinite(timeMinutes(batch.endTime)) || timeMinutes(batch.endTime) <= timeMinutes(batch.startTime)) return [];
   const firstSlot = Math.floor(timeMinutes(batch.startTime) / 15);
   const afterLastSlot = Math.ceil(timeMinutes(batch.endTime) / 15);
@@ -257,7 +202,7 @@ export async function saveBatch(input, actorUid, existingId = '') {
   const year = new Date().getFullYear();
   const sequenceRef = doc(db, SEQUENCES, `batch-${year}`);
   try {
-    return await runTransaction(db, async (transaction) => {
+    const saved = await runTransaction(db, async (transaction) => {
       const sequenceSnap = existingId ? null : await transaction.get(sequenceRef);
       const number = existingId ? null : Number(sequenceSnap?.data()?.lastNumber || 0) + 1;
       const batchId = existingId || formatId('BAT', year, number);
@@ -309,6 +254,17 @@ export async function saveBatch(input, actorUid, existingId = '') {
       }
       return { ...next, documentId: batchId };
     });
+    if (existingId) {
+      if (input.scheduleRequirementsChanged) {
+        const scheduled = await getDocs(query(collection(db, 'timetableSessions'), where('batchDocId', '==', existingId)));
+        await Promise.all(scheduled.docs.filter((item) => !item.data().needsReview).map((item) => updateDoc(item.ref, {
+          needsReview: true,
+          reviewReason: 'Batch weekly hours or unavailable days changed. Owner review is required before the schedule is published.',
+          updatedAt: serverTimestamp(),
+        })));
+      }
+    }
+    return saved;
   } catch (error) { throw explain(error); }
 }
 
@@ -365,7 +321,6 @@ export async function archiveBatch(batchDocId, archived) {
 function checkEnrollmentAllowed(course, batch) {
   if (!course || course.status !== 'ACTIVE' || course.isArchived) throw serviceError('enrollment/course-unavailable', 'This course is inactive or archived.');
   if (!batch || batch.isArchived || batch.isClosed || batchStatus(batch) === 'COMPLETED') throw serviceError('enrollment/batch-unavailable', 'This batch is closed, completed, or archived.');
-  if (Number(batch.enrolledCount || 0) >= Number(batch.capacity || 0)) throw serviceError('enrollment/full', 'This batch has no available seats.');
   if (batch.courseDocId !== course.documentId && batch.courseDocId !== course.courseId) throw serviceError('enrollment/course-mismatch', 'The selected batch does not belong to that course.');
 }
 
@@ -382,11 +337,11 @@ function enrollmentRecord({ student, studentDocId, course, courseDocId, batch, b
   };
 }
 
-function batchWithCount(batch, count, now, actorUid, mutationId) {
+function batchWithCount(batch, count, now, actorUid, mutationId, offlineCount = Number(batch.offlineEnrolledCount || 0)) {
   // Workspace records include a UI-only `documentId`; never persist it back.
   // Firestore rules intentionally whitelist only enrollment counter mutations.
   const { documentId, ...storedBatch } = batch;
-  const next = { ...storedBatch, enrolledCount: count, status: batchStatus({ ...storedBatch, enrolledCount: count }), updatedAt: now, updatedBy: actorUid, lastEnrollmentMutationId: mutationId };
+  const next = { ...storedBatch, enrolledCount: count, offlineEnrolledCount: offlineCount, status: batchStatus({ ...storedBatch, enrolledCount: count, offlineEnrolledCount: offlineCount }), updatedAt: now, updatedBy: actorUid, lastEnrollmentMutationId: mutationId };
   return next;
 }
 
@@ -415,17 +370,27 @@ export async function createStudentAndEnroll(input, actorUid, courseDocId, batch
       const course = { documentId: courseSnap.id, ...courseSnap.data() };
       const batch = { documentId: batchSnap.id, ...batchSnap.data() };
       checkEnrollmentAllowed(course, batch);
+      const learningMode = input.learningMode || (batch.learningModes || ['OFFLINE'])[0];
+      if (!['ONLINE', 'OFFLINE'].includes(learningMode) || !(batch.learningModes || ['OFFLINE']).includes(learningMode)) throw serviceError('enrollment/mode-unavailable', 'Choose a learning mode offered for this batch.');
+      const initialPayment = validateInitialPayment(input.initialPaymentAmount, batch.price ?? course.fee);
+      const offlineCount = learningMode === 'OFFLINE' ? await offlineEnrollmentCount(transaction, batchDocId) : Number(batch.offlineEnrolledCount || 0);
+      if (learningMode === 'OFFLINE' && offlineCount >= Number(batch.offlineCapacity || batch.capacity || 0)) throw serviceError('enrollment/offline-full', 'Offline seats are full. Please select Online mode if available.');
       const studentNumber = Number(sequenceSnap.data()?.lastNumber || 0) + 1;
       const studentId = formatId('STU', nowYear, studentNumber);
       const idRef = doc(db, 'studentIds', studentId);
       const enrollmentRef = doc(db, ENROLLMENTS, enrollmentId(studentRef.id, batchDocId));
       const feeRef = doc(db, 'feeRecords', enrollmentRef.id);
-      const [idSnap, enrollmentSnap, feeSnap] = await Promise.all([transaction.get(idRef), transaction.get(enrollmentRef), transaction.get(feeRef)]);
+      const paymentRef = doc(db, 'payments', `initial_${enrollmentRef.id}`);
+      const [idSnap, enrollmentSnap, feeSnap, paymentSnap] = await Promise.all([transaction.get(idRef), transaction.get(enrollmentRef), transaction.get(feeRef), transaction.get(paymentRef)]);
       if (idSnap.exists()) throw serviceError('student/id-conflict', 'Student ID allocation conflicted. Please retry.');
       if (enrollmentSnap.exists()) throw serviceError('enrollment/duplicate', 'This student is already enrolled in the selected batch.');
+      if (feeSnap.exists() || paymentSnap.exists()) throw serviceError('enrollment/financial-conflict', 'Existing financial records exist for this enrollment. Ask an Owner to reconcile them.');
       const now = serverTimestamp();
+      const studentFields = { ...input };
+      delete studentFields.initialPaymentAmount;
+      delete studentFields.learningMode;
       const student = {
-        ...input, studentId, accountStatus: input.authUid ? 'ACTIVE' : 'NO_ACCOUNT', course: course.name, courseDocId, courseId: course.courseId,
+        ...studentFields, studentId, accountStatus: input.authUid ? 'ACTIVE' : 'NO_ACCOUNT', course: course.name, courseDocId, courseId: course.courseId,
         batch: batch.name, batchDocId, batchId: batch.batchId, enrollmentStatus: 'ACTIVE',
         isArchived: false,
         createdAt: now, updatedAt: now, createdBy: actorUid, updatedBy: actorUid,
@@ -433,10 +398,11 @@ export async function createStudentAndEnroll(input, actorUid, courseDocId, batch
       transaction.set(studentRef, student);
       transaction.set(idRef, { studentDocId: studentRef.id, createdAt: now, createdBy: actorUid });
       transaction.set(sequenceRef, { lastNumber: studentNumber, lastStudentId: studentId, lastStudentDocId: studentRef.id, updatedAt: now });
-      const enrollment = enrollmentRecord({ student, studentDocId: studentRef.id, course, courseDocId, batch, batchDocId, actorUid, now });
+      const enrollment = enrollmentRecord({ student, studentDocId: studentRef.id, course, courseDocId, batch, batchDocId, actorUid, now, learningMode });
       transaction.set(enrollmentRef, enrollment);
-      if (!feeSnap.exists()) { const fee = Number(batch.price ?? course.fee ?? 0); transaction.set(feeRef, { enrollmentId: enrollmentRef.id, studentDocId: studentRef.id, studentId, studentName: student.fullName, courseName: course.name, batchId: batch.batchId, courseDocId, batchDocId, totalFee: fee, amountPaid: 0, remainingBalance: fee, paymentStatus: fee === 0 ? 'PAID' : 'UNPAID', createdAt: now, updatedAt: now }); }
-      transaction.set(batchRef, batchWithCount(batch, Number(batch.enrolledCount || 0) + 1, now, actorUid, enrollmentRef.id));
+      transaction.set(feeRef, { enrollmentId: enrollmentRef.id, studentDocId: studentRef.id, studentId, studentName: student.fullName, courseName: course.name, batchId: batch.batchId, batchName: batch.name, courseDocId, batchDocId, learningMode, enrolledAt: now, totalFee: initialPayment.fee, amountPaid: initialPayment.paid, remainingBalance: initialPayment.remaining, paymentStatus: initialPayment.remaining === 0 ? 'PAID' : 'PARTIALLY_PAID', advancePaid: initialPayment.paid * 2 >= initialPayment.fee, ...(initialPayment.paid > 0 ? { lastPaymentId: paymentRef.id } : {}), createdAt: now, updatedAt: now });
+      if (initialPayment.paid > 0) transaction.set(paymentRef, { feeRecordId: enrollmentRef.id, enrollmentId: enrollmentRef.id, studentDocId: studentRef.id, studentId, batchDocId, amount: initialPayment.paid, remainingBalance: initialPayment.remaining, method: 'MANUAL', purpose: 'ADVANCE', status: 'VERIFIED', isDemo: false, reference: null, recordedBy: actorUid, createdAt: now });
+      transaction.set(batchRef, batchWithCount(batch, Number(batch.enrolledCount || 0) + 1, now, actorUid, enrollmentRef.id, offlineCount + (learningMode === 'OFFLINE' ? 1 : 0)));
       transaction.set(historyRef, { studentDocId: studentRef.id, studentId, courseDocId, batchDocId, action: 'ENROLLED', actorUid, createdAt: now });
       return { ...student, documentId: studentRef.id };
     });
@@ -444,6 +410,11 @@ export async function createStudentAndEnroll(input, actorUid, courseDocId, batch
 }
 
 export async function transferStudent(studentDocId, courseDocId, batchDocId, actorUid, studentChanges = {}) {
+  const initialPaymentAmount = studentChanges.initialPaymentAmount;
+  const requestedLearningMode = studentChanges.learningMode;
+  const profileChanges = { ...studentChanges };
+  delete profileChanges.initialPaymentAmount;
+  delete profileChanges.learningMode;
   const studentRef = doc(db, STUDENTS, studentDocId);
   const newHistoryRef = doc(collection(db, HISTORY));
   try {
@@ -464,10 +435,13 @@ export async function transferStudent(studentDocId, courseDocId, batchDocId, act
       const currentBatchDocId = student.batchDocId || '';
       const isSameBatch = currentBatchDocId === batchDocId && student.enrollmentStatus === 'ACTIVE';
       if (!isSameBatch) checkEnrollmentAllowed(course, batch);
-      if (destinationEnrollmentSnap.exists() && destinationEnrollmentSnap.data().status === 'ACTIVE' && !isSameBatch) {
-        throw serviceError('enrollment/duplicate', 'This student is already enrolled in the selected batch.');
+      if (destinationEnrollmentSnap.exists() && !isSameBatch) {
+        throw serviceError('enrollment/duplicate', 'A prior enrollment record exists for this batch. Ask an Owner to reconcile it before retrying.');
       }
       const destinationFeeSnap = await transaction.get(newFeeRef);
+      const initialPaymentRef = doc(db, 'payments', `initial_${newEnrollmentRef.id}`);
+      const initialPaymentSnap = await transaction.get(initialPaymentRef);
+      if (!isSameBatch && (destinationFeeSnap.exists() || initialPaymentSnap.exists())) throw serviceError('enrollment/financial-conflict', 'Prior fee records exist for this enrollment. Ask an Owner to reconcile them.');
       const oldBatchRef = currentBatchDocId ? doc(db, BATCHES, currentBatchDocId) : null;
       const oldEnrollmentRef = currentBatchDocId ? doc(db, ENROLLMENTS, enrollmentId(studentDocId, currentBatchDocId)) : null;
       const [oldBatchSnap, oldEnrollmentSnap] = oldBatchRef
@@ -476,9 +450,20 @@ export async function transferStudent(studentDocId, courseDocId, batchDocId, act
       if (currentBatchDocId && student.enrollmentStatus === 'ACTIVE' && (!oldBatchSnap?.exists() || !oldEnrollmentSnap?.exists())) {
         throw serviceError('enrollment/inconsistent', 'The current enrollment is incomplete. Ask an Owner to review this record before transferring it.');
       }
+      const learningMode = requestedLearningMode || (batch.learningModes || ['OFFLINE'])[0];
+      let initialPayment = null;
+      let offlineCount = Number(batch.offlineEnrolledCount || 0);
+      if (!isSameBatch) {
+        if (!['ONLINE', 'OFFLINE'].includes(learningMode) || !(batch.learningModes || ['OFFLINE']).includes(learningMode)) throw serviceError('enrollment/mode-unavailable', 'Choose a learning mode offered for this batch.');
+        initialPayment = validateInitialPayment(initialPaymentAmount, batch.price ?? course.fee);
+        if (learningMode === 'OFFLINE') {
+          offlineCount = await offlineEnrollmentCount(transaction, batchDocId);
+          if (offlineCount >= Number(batch.offlineCapacity || batch.capacity || 0)) throw serviceError('enrollment/offline-full', 'Offline seats are full. Please select Online mode if available.');
+        }
+      }
       const now = serverTimestamp();
       const updatedStudent = {
-        ...student, ...studentChanges, studentId: student.studentId,
+        ...student, ...profileChanges, studentId: student.studentId,
         course: course.name, courseDocId, courseId: course.courseId,
         batch: batch.name, batchDocId, batchId: batch.batchId,
         enrollmentStatus: 'ACTIVE', updatedAt: now, updatedBy: actorUid,
@@ -486,7 +471,8 @@ export async function transferStudent(studentDocId, courseDocId, batchDocId, act
       if (!isSameBatch) {
         if (oldBatchSnap?.exists() && student.enrollmentStatus === 'ACTIVE') {
           const oldBatch = oldBatchSnap.data();
-          transaction.set(oldBatchRef, batchWithCount(oldBatch, Math.max(0, Number(oldBatch.enrolledCount || 0) - 1), now, actorUid, oldEnrollmentRef.id));
+          const oldOfflineCount = Math.max(0, Number(oldBatch.offlineEnrolledCount ?? (oldEnrollmentSnap.data().learningMode === 'OFFLINE' ? oldBatch.enrolledCount : 0)) - (oldEnrollmentSnap.data().learningMode === 'OFFLINE' ? 1 : 0));
+          transaction.set(oldBatchRef, batchWithCount(oldBatch, Math.max(0, Number(oldBatch.enrolledCount || 0) - 1), now, actorUid, oldEnrollmentRef.id, oldOfflineCount));
           transaction.update(oldEnrollmentRef, { status: 'TRANSFERRED', updatedAt: now, updatedBy: actorUid });
         }
         if (destinationEnrollmentSnap.exists()) {
@@ -495,11 +481,12 @@ export async function transferStudent(studentDocId, courseDocId, batchDocId, act
             studentPhone: updatedStudent.phone, updatedAt: now, updatedBy: actorUid,
           });
         } else {
-          const enrollment = enrollmentRecord({ student: updatedStudent, studentDocId, course, courseDocId, batch, batchDocId, actorUid, now });
+          const enrollment = enrollmentRecord({ student: updatedStudent, studentDocId, course, courseDocId, batch, batchDocId, actorUid, now, learningMode });
           transaction.set(newEnrollmentRef, enrollment);
-          if (!destinationFeeSnap.exists()) { const fee = Number(batch.price ?? course.fee ?? 0); transaction.set(newFeeRef, { enrollmentId: newEnrollmentRef.id, studentDocId, studentId: student.studentId, studentName: updatedStudent.fullName, courseName: course.name, batchId: batch.batchId, courseDocId, batchDocId, totalFee: fee, amountPaid: 0, remainingBalance: fee, paymentStatus: fee === 0 ? 'PAID' : 'UNPAID', createdAt: now, updatedAt: now }); }
+          transaction.set(newFeeRef, { enrollmentId: newEnrollmentRef.id, studentDocId, studentId: student.studentId, studentName: updatedStudent.fullName, courseName: course.name, batchId: batch.batchId, batchName: batch.name, courseDocId, batchDocId, learningMode, enrolledAt: now, totalFee: initialPayment.fee, amountPaid: initialPayment.paid, remainingBalance: initialPayment.remaining, paymentStatus: initialPayment.remaining === 0 ? 'PAID' : 'PARTIALLY_PAID', advancePaid: initialPayment.paid * 2 >= initialPayment.fee, ...(initialPayment.paid > 0 ? { lastPaymentId: initialPaymentRef.id } : {}), createdAt: now, updatedAt: now });
+          if (initialPayment.paid > 0) transaction.set(initialPaymentRef, { feeRecordId: newEnrollmentRef.id, enrollmentId: newEnrollmentRef.id, studentDocId, studentId: student.studentId, batchDocId, amount: initialPayment.paid, remainingBalance: initialPayment.remaining, method: 'MANUAL', purpose: 'ADVANCE', status: 'VERIFIED', isDemo: false, reference: null, recordedBy: actorUid, createdAt: now });
         }
-        transaction.set(newBatchRef, batchWithCount(batch, Number(batch.enrolledCount || 0) + 1, now, actorUid, newEnrollmentRef.id));
+        transaction.set(newBatchRef, batchWithCount(batch, Number(batch.enrolledCount || 0) + 1, now, actorUid, newEnrollmentRef.id, offlineCount + (learningMode === 'OFFLINE' ? 1 : 0)));
         transaction.set(newHistoryRef, {
           studentDocId, studentId: student.studentId, action: currentBatchDocId ? 'TRANSFERRED' : 'ENROLLED',
           previousBatchDocId: currentBatchDocId || null, newBatchDocId: batchDocId, actorUid, createdAt: now,
@@ -541,7 +528,9 @@ export async function withdrawStudent(studentDocId, actorUid) {
       const [batchSnap, enrollmentSnap] = await Promise.all([transaction.get(batchRef), transaction.get(enrollmentRef)]);
       if (!batchSnap.exists() || !enrollmentSnap.exists() || enrollmentSnap.data().status !== 'ACTIVE') throw serviceError('enrollment/inconsistent', 'The active enrollment record is missing. Ask an Owner to review this student.');
       const now = serverTimestamp();
-      transaction.set(batchRef, batchWithCount(batchSnap.data(), Math.max(0, Number(batchSnap.data().enrolledCount || 0) - 1), now, actorUid, enrollmentRef.id));
+      const batch = batchSnap.data(); const enrollment = enrollmentSnap.data();
+      const currentOffline = Number(batch.offlineEnrolledCount ?? (enrollment.learningMode === 'OFFLINE' ? batch.enrolledCount : 0));
+      transaction.set(batchRef, batchWithCount(batch, Math.max(0, Number(batch.enrolledCount || 0) - 1), now, actorUid, enrollmentRef.id, Math.max(0, currentOffline - (enrollment.learningMode === 'OFFLINE' ? 1 : 0))));
       transaction.update(enrollmentRef, { status: 'WITHDRAWN', updatedAt: now, updatedBy: actorUid });
       transaction.update(studentRef, { enrollmentStatus: 'WITHDRAWN', batchDocId: null, updatedAt: now, updatedBy: actorUid });
       transaction.set(historyRef, { studentDocId: studentRef.id, studentId: student.studentId, previousBatchDocId: student.batchDocId, action: 'WITHDRAWN', actorUid, createdAt: now });

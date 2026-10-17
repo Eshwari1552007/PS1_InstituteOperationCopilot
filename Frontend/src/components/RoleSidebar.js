@@ -10,7 +10,7 @@ const MENU = {
   COUNSELOR: [['Dashboard', LayoutDashboard, true], ['Students', GraduationCap], ['Batches & Courses', BookOpen], ['Attendance', ClipboardCheck, true], ['Fees & EMI', CircleDollarSign, true], ['AI Copilot', Sparkles]],
   TRAINER: [['Dashboard', LayoutDashboard, true], ['My Batches', BookOpen], ['Attendance', ClipboardCheck, true], ['Timetable', CalendarDays], ['AI Copilot', Sparkles]],
   ACCOUNTS: [['Dashboard', LayoutDashboard, true], ['Fees & EMI', CircleDollarSign, true], ['Approvals · financial only', Users], ['AI Copilot', Sparkles]],
-  STUDENT: [['Student Home', LayoutDashboard, true]],
+  STUDENT: [['Student Home', LayoutDashboard, true], ['Attendance', ClipboardCheck, true], ['Timetable', CalendarDays]],
 };
 
 export default function RoleSidebar({ profile, onLogout, active, onNavigate }) {
@@ -35,7 +35,7 @@ export default function RoleSidebar({ profile, onLogout, active, onNavigate }) {
             const canNavigate = Boolean(enabled)
               || (target === 'students' && ['OWNER', 'COUNSELOR'].includes(profile.role))
               || (target === 'batches' && ['OWNER', 'COUNSELOR', 'TRAINER'].includes(profile.role));
-            const finalCanNavigate = canNavigate || (target === 'attendance' && ['OWNER', 'COUNSELOR', 'TRAINER'].includes(profile.role)) || (target === 'fees' && ['OWNER', 'COUNSELOR', 'ACCOUNTS'].includes(profile.role)) || (target === 'timetable' && ['OWNER', 'TRAINER'].includes(profile.role));
+            const finalCanNavigate = canNavigate || (target === 'attendance' && ['OWNER', 'COUNSELOR', 'TRAINER', 'STUDENT'].includes(profile.role)) || (target === 'fees' && ['OWNER', 'COUNSELOR', 'ACCOUNTS'].includes(profile.role)) || (target === 'timetable' && ['OWNER', 'TRAINER', 'STUDENT'].includes(profile.role));
             return (
               <button
                 key={label}

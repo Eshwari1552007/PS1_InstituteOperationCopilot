@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertCircle, ChevronLeft, ChevronRight, Eye, Pencil, Plus, RefreshCw, Search, Trash2, Users, X } from 'lucide-react';
 import { listStudents, removeStudent, saveStudent } from './studentService';
-import { getBatchDurationHours, getEnrollmentOptions } from '../batches/academyService';
+import { getEnrollmentOptions } from '../batches/academyService';
 import './students.css';
 
 const PAGE_SIZE = 10;
-const EMPTY_STUDENT = { studentId: '', fullName: '', email: '', phone: '', dateOfBirth: '', gender: '', course: '', batch: '', admissionDate: '', status: 'ACTIVE', address: '', guardianName: '', guardianPhone: '' };
+const EMPTY_STUDENT = { studentId: '', fullName: '', email: '', phone: '', dateOfBirth: '', gender: '', course: '', batch: '', admissionDate: '', status: 'ACTIVE', address: '', guardianName: '', guardianPhone: '', learningMode: '', initialPaymentAmount: '' };
 
 function errorMessage(error) {
   if (error.code === 'student/duplicate-id') return error.message;
@@ -26,13 +26,17 @@ function StudentForm({ initial, mode, busy, error, onClose, onSubmit, options })
   const batchChoices = options.batches.filter((item) => item.courseDocId === values.courseDocId
     || item.documentId === initial?.batchDocId);
   const selectedBatch = batchChoices.find((item) => item.documentId === values.batchDocId);
+  const selectedCourse = options.courses.find((item) => item.documentId === values.courseDocId);
+  const courseFee = Number(selectedBatch?.price ?? selectedCourse?.fee ?? 0);
+  const minimumAdvance = Math.ceil(courseFee * 100 / 2) / 100;
+  const selectingNewEnrollment = mode === 'create' || (mode === 'edit' && selectedBatch && selectedBatch.documentId !== initial?.batchDocId);
   const selectCourse = (event) => {
     const course = options.courses.find((item) => item.documentId === event.target.value);
     setValues((current) => ({ ...current, courseDocId: event.target.value, course: course?.name || '', courseId: course?.courseId || '', batchDocId: '', batch: '', batchId: '' }));
   };
   const selectBatch = (event) => {
     const batch = batchChoices.find((item) => item.documentId === event.target.value);
-    setValues((current) => ({ ...current, batchDocId: event.target.value, batch: batch?.name || '', batchId: batch?.batchId || '' }));
+    setValues((current) => ({ ...current, batchDocId: event.target.value, batch: batch?.name || '', batchId: batch?.batchId || '', initialPaymentAmount: '', learningMode: batch?.learningModes?.[0] || 'OFFLINE' }));
   };
   const field = (key, label, type = 'text', required = false, readOnly = false) => (
     <label className="sm-field" key={key}>
@@ -64,7 +68,8 @@ function StudentForm({ initial, mode, busy, error, onClose, onSubmit, options })
           {field('admissionDate', 'Admission date', 'date', true)}
           <label className="sm-field"><span>Account status<b aria-hidden="true"> *</b></span><select value={values.status === 'PENDING' ? 'ACTIVE' : values.status} onChange={update('status')} disabled={mode === 'view'}><option value="ACTIVE">Active</option><option value="INACTIVE">Inactive</option></select>{errors.status && <small role="alert">{errors.status}</small>}</label>
         </div>
-        {selectedBatch && <div className="sm-enrollment-preview"><strong>{selectedBatch.teacherName || 'Trainer not assigned'}</strong><span>{selectedBatch.roomNumber || 'Room assigned by timetable'} · {selectedBatch.daysOfWeek?.join(', ')} · {getBatchDurationHours(selectedBatch) || 'Duration missing'} h/session · clock time assigned in timetable</span><span>{selectedBatch.startDate} – {selectedBatch.endDate} · {Math.max(0, Number(selectedBatch.capacity || 0) - Number(selectedBatch.enrolledCount || 0))} seats available</span></div>}
+        {selectedBatch && <div className="sm-enrollment-preview"><strong>{selectedBatch.teacherName || 'Trainer not assigned'}</strong><span>{selectedBatch.roomNumber || 'Room assigned by timetable'} · {selectedBatch.weeklyTeachingHours || 'Weekly hours not set'} teaching hours/week · Days off: {selectedBatch.unavailableDays?.length ? selectedBatch.unavailableDays.join(', ') : 'None'}</span><span>{selectedBatch.startDate} – {selectedBatch.endDate} · Offline seats: {Math.max(0, Number(selectedBatch.offlineCapacity || selectedBatch.capacity || 0) - Number(selectedBatch.offlineEnrolledCount || selectedBatch.enrolledCount || 0))}</span></div>}
+        {selectingNewEnrollment && selectedBatch && <><h3>Initial payment &amp; mode</h3><div className="sm-form__grid"><label className="sm-field"><span>Learning mode *</span><select value={values.learningMode || (selectedBatch.learningModes || ['OFFLINE'])[0]} onChange={update('learningMode')} disabled={mode === 'view'}>{(selectedBatch.learningModes || ['OFFLINE']).map((item) => <option key={item}>{item}</option>)}</select></label><label className="sm-field"><span>Initial amount actually received (₹) *</span><input type="number" min={minimumAdvance} max={courseFee} step="0.01" value={values.initialPaymentAmount || ''} onChange={update('initialPaymentAmount')} required={mode !== 'view'} readOnly={mode === 'view'} /></label><p className="sm-profile-note">Course fee: {new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(courseFee)}. Minimum advance: {new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(minimumAdvance)}. This records a staff-confirmed manual receipt.</p></div></>}
         {values.enrollmentStatus && <p className="sm-enrollment-status">Current enrollment: {values.enrollmentStatus}</p>}
         <h3>Additional information</h3><div className="sm-form__grid">
           {field('guardianName', 'Parent / guardian name')}{field('guardianPhone', 'Parent / guardian contact', 'tel')}

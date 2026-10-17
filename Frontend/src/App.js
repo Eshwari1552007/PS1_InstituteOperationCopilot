@@ -8,6 +8,7 @@ import StudentManagement from './students/StudentManagement';
 import BatchesCourses from './batches/BatchesCourses';
 import StudentPortal from './students/StudentPortal';
 import AttendanceWorkspace from './students/AttendanceWorkspace';
+import StudentAttendance from './students/StudentAttendance';
 import FeesWorkspace from './students/FeesWorkspace';
 import Timetable from './timetable/Timetable';
 import { PUBLIC_ROLES, completeProfile, logout, observeAuth } from './auth/authService';
@@ -76,6 +77,7 @@ export default function App() {
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [profileError, setProfileError] = useState('');
+  const [timetableBatchId, setTimetableBatchId] = useState('');
   const [route, setRoute] = useState(() => window.location.hash.replace(/^#\/?/, '') || 'dashboard');
 
   useEffect(() => {
@@ -118,16 +120,17 @@ export default function App() {
     await logout();
   };
 
-  const navigate = (nextRoute) => {
+  const navigate = (nextRoute, detailId = '') => {
     const allowed = nextRoute === 'dashboard'
       || (nextRoute === 'approvals' && profile?.role === 'OWNER')
       || (nextRoute === 'students' && ['OWNER', 'COUNSELOR'].includes(profile?.role))
       || (nextRoute === 'batches' && ['OWNER', 'COUNSELOR', 'TRAINER'].includes(profile?.role));
     const permitted = allowed
-      || (nextRoute === 'attendance' && ['OWNER', 'COUNSELOR', 'TRAINER'].includes(profile?.role))
+      || (nextRoute === 'attendance' && ['OWNER', 'COUNSELOR', 'TRAINER', 'STUDENT'].includes(profile?.role))
       || (nextRoute === 'fees' && ['OWNER', 'COUNSELOR', 'ACCOUNTS'].includes(profile?.role));
-    const withTimetable = permitted || (nextRoute === 'timetable' && ['OWNER', 'TRAINER'].includes(profile?.role));
+    const withTimetable = permitted || (nextRoute === 'timetable' && ['OWNER', 'TRAINER', 'STUDENT'].includes(profile?.role));
     const safeRoute = withTimetable ? nextRoute : 'dashboard';
+    if (safeRoute === 'timetable') setTimetableBatchId(detailId);
     window.location.hash = safeRoute === 'dashboard' ? '' : `/${safeRoute}`;
     setRoute(safeRoute);
   };
@@ -145,17 +148,17 @@ export default function App() {
       ? 'students'
       : route === 'batches' && ['OWNER', 'COUNSELOR', 'TRAINER'].includes(profile.role)
         ? 'batches'
-      : route === 'attendance' && ['OWNER', 'COUNSELOR', 'TRAINER'].includes(profile.role)
+      : route === 'attendance' && ['OWNER', 'COUNSELOR', 'TRAINER', 'STUDENT'].includes(profile.role)
         ? 'attendance'
       : route === 'fees' && ['OWNER', 'COUNSELOR', 'ACCOUNTS'].includes(profile.role)
         ? 'fees'
-      : route === 'timetable' && ['OWNER', 'TRAINER'].includes(profile.role)
+      : route === 'timetable' && ['OWNER', 'TRAINER', 'STUDENT'].includes(profile.role)
         ? 'timetable'
       : 'dashboard';
   return <div className="ep-app">
     <RoleSidebar profile={profile} active={authorizedRoute} onNavigate={navigate} onLogout={handleLogout} />
     <main className="ep-main">
-      {authorizedRoute === 'approvals' ? <OwnerApprovals ownerUid={account.uid} /> : authorizedRoute === 'students' ? <StudentManagement profile={profile} /> : authorizedRoute === 'batches' ? <BatchesCourses profile={profile} /> : authorizedRoute === 'attendance' ? <AttendanceWorkspace profile={profile} /> : authorizedRoute === 'fees' ? <FeesWorkspace profile={profile} /> : authorizedRoute === 'timetable' ? <Timetable profile={profile} /> : profile.role === 'STUDENT' ? <StudentPortal profile={profile} /> : <Dashboard profile={profile} />}
+      {authorizedRoute === 'approvals' ? <OwnerApprovals ownerUid={account.uid} /> : authorizedRoute === 'students' ? <StudentManagement profile={profile} /> : authorizedRoute === 'batches' ? <BatchesCourses profile={profile} /> : authorizedRoute === 'attendance' ? (profile.role === 'STUDENT' ? <StudentAttendance profile={profile} /> : <AttendanceWorkspace profile={profile} />) : authorizedRoute === 'fees' ? <FeesWorkspace profile={profile} /> : authorizedRoute === 'timetable' ? <Timetable profile={profile} initialBatchId={timetableBatchId} /> : profile.role === 'STUDENT' ? <StudentPortal profile={profile} onNavigate={navigate} /> : <Dashboard profile={profile} />}
     </main>
   </div>;
 }
